@@ -1,0 +1,78 @@
+{
+  "phase": "Phase 2: SimilarityEvaluator 测试",
+  "status": "COMPLETED",
+  "test_results": {
+    "baseline_test": {
+      "identical_spectrum_score": 100.0,
+      "passed": true
+    },
+    "noise_test": {
+      "noise_levels_tested": [
+        0.05,
+        0.1,
+        0.2,
+        0.5
+      ],
+      "results": [
+        {
+          "noise_level": 0.05,
+          "quality_score": 96.9434171003723,
+          "pearson": 0.999666727395544,
+          "rmse": 0.04558112027513837
+        },
+        {
+          "noise_level": 0.1,
+          "quality_score": 93.70811926042492,
+          "pearson": 0.9984874271094362,
+          "rmse": 0.09836988353576055
+        },
+        {
+          "noise_level": 0.2,
+          "quality_score": 88.90989836458286,
+          "pearson": 0.9942740507074131,
+          "rmse": 0.18652539177708222
+        },
+        {
+          "noise_level": 0.5,
+          "quality_score": 78.04896640165558,
+          "pearson": 0.9709420971117027,
+          "rmse": 0.4437504031814296
+        }
+      ]
+    },
+    "weight_analysis": {
+      "weight_stats": {
+        "min": 1.0,
+        "max": 4.5,
+        "mean": 2.9814814814814814,
+        "std": 1.4303682605427792
+      },
+      "weight_distribution": {
+        "基础权重(1.0)": 24,
+        "DVP增强权重(4.5)": 31,
+        "范围权重(3.0)": 26
+      }
+    },
+    "quality_thresholds": {
+      "excellent": 95.0,
+      "good": 90.0,
+      "acceptable": 85.0,
+      "poor": 80.0
+    },
+    "batch_evaluation": {
+      "total_spectra": 10,
+      "average_score": 87.2716566356197,
+      "score_std": 8.442832083324078,
+      "quality_distribution": {
+        "excellent": 3,
+        "good": 3,
+        "acceptable": 7,
+        "poor": 3
+      }
+    }
+  },
+  "next_steps": [
+    "Phase 3: 加权自编码器模型开发",
+    "Phase 4: 模型训练脚本开发"
+  ]
+}

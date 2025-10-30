@@ -1,0 +1,75 @@
+{
+  "phase": "Phase 3: Weighted Autoencoder 测试（简化版）",
+  "status": "COMPLETED",
+  "model_architecture": {
+    "input_dim": 81,
+    "encoder_dims": [
+      48,
+      16,
+      4
+    ],
+    "decoder_dims": [
+      16,
+      48,
+      81
+    ],
+    "latent_dim": 4
+  },
+  "training_results": {
+    "training_samples": 80,
+    "validation_samples": 20,
+    "train_error_mean": 0.8797614969763543,
+    "train_error_std": 0.5800808767233179,
+    "val_error_mean": 0.9489600087321992,
+    "val_error_std": 0.6658775746716942,
+    "threshold_99_5": 2.588771217303563
+  },
+  "test_results": [
+    {
+      "noise_level": 0.05,
+      "reconstruction_error": 0.2362576924913516,
+      "threshold": 2.588771217303563,
+      "is_anomaly": false,
+      "quality_score": 100.0
+    },
+    {
+      "noise_level": 0.1,
+      "reconstruction_error": 0.9308070109001532,
+      "threshold": 2.588771217303563,
+      "is_anomaly": false,
+      "quality_score": 100.0
+    },
+    {
+      "noise_level": 0.2,
+      "reconstruction_error": 3.6450726243105422,
+      "threshold": 2.588771217303563,
+      "is_anomaly": true,
+      "quality_score": 0.0
+    },
+    {
+      "noise_level": 0.5,
+      "reconstruction_error": 19.667336853119917,
+      "threshold": 2.588771217303563,
+      "is_anomaly": true,
+      "quality_score": 0.0
+    },
+    {
+      "noise_level": 1.0,
+      "reconstruction_error": 94.15938815822808,
+      "threshold": 2.588771217303563,
+      "is_anomaly": true,
+      "quality_score": 0.0
+    }
+  ],
+  "saved_components": {
+    "encoder": "/workspace/code/spectrum_anomaly_detection/models/dvp_encoder_v1.0.joblib",
+    "decoder": "/workspace/code/spectrum_anomaly_detection/models/dvp_decoder_v1.0.joblib",
+    "scaler": "/workspace/code/spectrum_anomaly_detection/models/dvp_scaler_v1.0.joblib",
+    "metadata": "/workspace/code/spectrum_anomaly_detection/models/dvp_metadata_v1.0.json"
+  },
+  "next_steps": [
+    "Phase 4: 模型训练脚本开发",
+    "完整TensorFlow版本实现",
+    "模型评估和可视化系统"
+  ]
+}

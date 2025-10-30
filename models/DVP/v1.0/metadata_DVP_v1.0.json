@@ -1,0 +1,53 @@
+{
+  "coating_name": "DVP",
+  "version": "v1.0",
+  "training_date": "2025-10-30T19:07:38.501231",
+  "config": {
+    "training_samples": 100,
+    "validation_split": 0.2,
+    "noise_levels": [
+      0.05,
+      0.1,
+      0.15,
+      0.2
+    ],
+    "quality_threshold": 85.0,
+    "stability_threshold_percentile": 99.5,
+    "random_seed": 42
+  },
+  "similarity_evaluator": {
+    "quality_threshold": 85.0,
+    "normal_scores_stats": {
+      "mean": 81.70615833090125,
+      "std": 14.695528096578421,
+      "min": 51.94224786162829,
+      "max": 97.16563470485873,
+      "percentile_5": 58.05626051429852,
+      "percentile_95": 96.71617594517697
+    }
+  },
+  "weighted_autoencoder": {
+    "stability_threshold": 4.977571029778898,
+    "threshold_percentile": 99.5,
+    "error_stats": {
+      "train_mean": 0.352380817236067,
+      "train_std": 0.6055727467652638,
+      "val_mean": 1.403455982214808,
+      "val_std": 1.6862218051546938
+    }
+  },
+  "model_architecture": {
+    "input_dim": 81,
+    "encoder_dims": [
+      48,
+      16,
+      4
+    ],
+    "decoder_dims": [
+      16,
+      48,
+      81
+    ],
+    "latent_dim": 4
+  }
+}

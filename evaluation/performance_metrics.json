@@ -1,0 +1,25 @@
+{
+  "quality_score": {
+    "accuracy": 0.956,
+    "precision": 0.751412429378531,
+    "recall": 1.0,
+    "f1_score": 0.8580645161290322,
+    "auc_roc": 0.986141825151113,
+    "threshold": 0.9826617700903371
+  },
+  "stability_score": {
+    "accuracy": 0.126,
+    "precision": 0.126,
+    "recall": 1.0,
+    "f1_score": 0.22380106571936056,
+    "auc_roc": 0.25227924884675457,
+    "threshold": 4.98
+  },
+  "combined_model": {
+    "accuracy": 0.2,
+    "precision": 0.2,
+    "recall": 1.0,
+    "f1_score": 0.3333333333333333,
+    "auc_roc": 0.34977499999999995
+  }
+}
