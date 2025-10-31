@@ -76,7 +76,14 @@ class SpectrumAnomalyTrainer:
             'weights_base_value': 3.0,            # 基础权重值
             'weights_peak_range': [400.0, 550.0], # 重点增强区间
             'weights_peak_multiplier': 1.5,       # 重点区间倍率
-            'random_seed': 42
+            'random_seed': 42,
+            # AE默认固化配置（无需每次传参）
+            'ae_encoder_layers': [64, 32, 16, 8],
+            'ae_decoder_layers': [16, 32, 64, 81],
+            'ae_alpha': 1e-4,
+            'ae_early_stopping': True,
+            'ae_n_iter_no_change': 10,
+            'ae_validation_fraction': 0.1
         }
         
         logger.info(f"SpectrumAnomalyTrainer 初始化完成 [{coating_name} {version}]")
@@ -145,9 +152,10 @@ class SpectrumAnomalyTrainer:
         Returns:
             tuple: (波长数组, 标准光谱数组)
         """
-        # 使用项目相对路径，兼容不同环境
+        # 使用项目相对路径，或命令行传入的自定义NPZ路径
         project_root = Path(__file__).parent.parent
-        data_path = str(project_root / "data" / "dvp_processed_data.npz")
+        default_path = str(project_root / "data" / "dvp_processed_data.npz")
+        data_path = getattr(self, 'data_npz_path', None) or default_path
         
         if not os.path.exists(data_path):
             raise FileNotFoundError(f"标准曲线数据文件不存在: {data_path}")
@@ -183,7 +191,7 @@ class SpectrumAnomalyTrainer:
         else:
             standard_spectrum = spectra
         
-        logger.info(f"标准曲线加载完成: {len(wavelengths)}个波长点")
+        logger.info(f"标准曲线加载完成: {len(wavelengths)}个波长点 | 来源: {data_path}")
         return wavelengths, standard_spectrum
     
     def generate_training_data(self, standard_spectrum: np.ndarray, 
@@ -312,7 +320,7 @@ class SpectrumAnomalyTrainer:
         return evaluator_result
     
     def train_autoencoder(self, X_train: np.ndarray, X_val: np.ndarray, 
-                         wavelengths: np.ndarray) -> dict:
+                         y_train: np.ndarray, wavelengths: np.ndarray) -> dict:
         """
         训练WeightedAutoencoder
         
@@ -327,7 +335,7 @@ class SpectrumAnomalyTrainer:
         logger.info("开始训练WeightedAutoencoder...")
         
         # 只使用正常样本训练自编码器
-        normal_train = X_train[:len(X_train)//2]  # 假设前一半是正常样本
+        normal_train = X_train[y_train == 1]
         
         # 使用简化的训练方法（基于Phase 3的测试结果）
         from sklearn.preprocessing import StandardScaler
@@ -349,21 +357,37 @@ class SpectrumAnomalyTrainer:
         weights = self._prepare_weights(wavelengths, self.coating_name)
         
         # 构建自编码器
+        # 可配置的网络结构与正则化
+        enc_layers = tuple(self.config.get('ae_encoder_layers', [64, 32, 16, 8]))
+        dec_layers = tuple(self.config.get('ae_decoder_layers', [16, 32, 64, 81]))
+        alpha = float(self.config.get('ae_alpha', 1e-4))
+        early_stopping = bool(self.config.get('ae_early_stopping', True))
+        n_iter_no_change = int(self.config.get('ae_n_iter_no_change', 10))
+        val_fraction = float(self.config.get('ae_validation_fraction', 0.1))
+
         encoder = MLPRegressor(
-            hidden_layer_sizes=(48, 16, 4),
+            hidden_layer_sizes=enc_layers,
             activation='relu',
             solver='adam',
             learning_rate_init=1e-3,
-            max_iter=200,
+            max_iter=400,
+            alpha=alpha,
+            early_stopping=early_stopping,
+            n_iter_no_change=n_iter_no_change,
+            validation_fraction=val_fraction,
             random_state=self.config['random_seed']
         )
         
         decoder = MLPRegressor(
-            hidden_layer_sizes=(16, 48, 81),
+            hidden_layer_sizes=dec_layers,
             activation='relu',
             solver='adam',
             learning_rate_init=1e-3,
-            max_iter=200,
+            max_iter=400,
+            alpha=alpha,
+            early_stopping=early_stopping,
+            n_iter_no_change=n_iter_no_change,
+            validation_fraction=val_fraction,
             random_state=self.config['random_seed']
         )
         
@@ -581,7 +605,7 @@ class SpectrumAnomalyTrainer:
             # 步骤4: 训练WeightedAutoencoder
             logger.info("步骤4: 训练WeightedAutoencoder")
             autoencoder_result, encoder, decoder, scaler, weights = self.train_autoencoder(
-                X_train, X_val, wavelengths
+                X_train, X_val, y_train, wavelengths
             )
             
             # 步骤5: 保存模型
@@ -636,6 +660,17 @@ def main():
                        help='MAD法的k倍数 (默认: 3.5)')
     parser.add_argument('--std_curve_agg', type=str, choices=['median','mean'], default='median',
                        help='标准曲线汇聚方法（median/mean），默认median')
+    parser.add_argument('--data-npz', type=str, default=None,
+                       help='自定义训练数据NPZ路径（包含 wavelengths, dvp_values）')
+    # AE参数
+    parser.add_argument('--ae-encoder-layers', type=int, nargs='+', default=None,
+                       help='AE编码器层，如 64 32 16 8')
+    parser.add_argument('--ae-decoder-layers', type=int, nargs='+', default=None,
+                       help='AE解码器层，如 16 32 64 81')
+    parser.add_argument('--ae-alpha', type=float, default=None, help='AE L2正则alpha')
+    parser.add_argument('--ae-early-stopping', action='store_true', help='启用AE early_stopping')
+    parser.add_argument('--ae-n-iter-no-change', type=int, default=None, help='early_stopping容忍迭代数')
+    parser.add_argument('--ae-validation-fraction', type=float, default=None, help='early_stopping验证集比例')
     # 权重相关
     parser.add_argument('--weights_base_range', type=float, nargs=2, metavar=('LO','HI'),
                        default=None, help='基础权重区间，例如 400 680')
@@ -671,6 +706,22 @@ def main():
     
     # 传递标准曲线汇聚方法
     setattr(trainer, 'std_curve_agg', args.std_curve_agg)
+    # 自定义数据路径
+    if args.data_npz:
+        setattr(trainer, 'data_npz_path', args.data_npz)
+    # 覆盖AE配置
+    if args.ae_encoder_layers is not None:
+        trainer.config['ae_encoder_layers'] = args.ae_encoder_layers
+    if args.ae_decoder_layers is not None:
+        trainer.config['ae_decoder_layers'] = args.ae_decoder_layers
+    if args.ae_alpha is not None:
+        trainer.config['ae_alpha'] = args.ae_alpha
+    if args.ae_early_stopping:
+        trainer.config['ae_early_stopping'] = True
+    if args.ae_n_iter_no_change is not None:
+        trainer.config['ae_n_iter_no_change'] = args.ae_n_iter_no_change
+    if args.ae_validation_fraction is not None:
+        trainer.config['ae_validation_fraction'] = args.ae_validation_fraction
     logger.info(f"训练配置: {trainer.config} | 标准曲线聚合: {args.std_curve_agg}")
     
     # 执行训练

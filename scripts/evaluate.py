@@ -23,7 +23,9 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import seaborn as sns
 from sklearn.metrics import (confusion_matrix, roc_curve, auc, classification_report,
-                           accuracy_score, precision_score, recall_score, f1_score)
+                           accuracy_score, precision_score, recall_score, f1_score,
+                           precision_recall_curve, average_precision_score)
+from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
 # 添加项目根目录到路径
@@ -796,6 +798,67 @@ class ModelEvaluator:
         output_path = self.output_dir / "confusion_matrix_and_roc.png"
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
+
+        # 额外输出：PR曲线
+        plt.figure(figsize=(8,6))
+        # Quality PR（异常为1 → 使用 -quality_scores）
+        pq, rq, _ = precision_recall_curve(quality_labels, -quality_scores)
+        ap_q = average_precision_score(quality_labels, -quality_scores)
+        plt.plot(rq, pq, label=f'Quality AP={ap_q:.3f}')
+        # Stability PR（使用方向一致分数）
+        ps, rs, _ = precision_recall_curve(stability_labels, stability_scores_dir)
+        ap_s = average_precision_score(stability_labels, stability_scores_dir)
+        plt.plot(rs, ps, label=f'Stability AP={ap_s:.3f}')
+        # Combined PR
+        pc, rc, _ = precision_recall_curve(combined_true, combined_scores)
+        ap_c = average_precision_score(combined_true, combined_scores)
+        plt.plot(rc, pc, label=f'Combined AP={ap_c:.3f}')
+        plt.xlabel('Recall')
+        plt.ylabel('Precision')
+        plt.title('Precision-Recall 曲线')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        pr_path = self.output_dir / 'pr_curves.png'
+        plt.savefig(pr_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        # 阈值敏感性（F1 vs 阈值）
+        plt.figure(figsize=(8,6))
+        # Quality：基于 -quality_scores 的阈值
+        th_q = np.linspace((-quality_scores).min(), (-quality_scores).max(), 100)
+        f1_q = []
+        for th in th_q:
+            pred = ((-quality_scores) > th).astype(int)
+            f1_q.append(f1_score(quality_labels, pred, zero_division=0))
+        plt.plot(th_q, f1_q, label='Quality F1')
+        # Stability
+        th_s = np.linspace(stability_scores_dir.min(), stability_scores_dir.max(), 100)
+        f1_s = []
+        for th in th_s:
+            pred = (stability_scores_dir > th).astype(int)
+            f1_s.append(f1_score(stability_labels, pred, zero_division=0))
+        plt.plot(th_s, f1_s, label='Stability F1')
+        plt.xlabel('Threshold')
+        plt.ylabel('F1')
+        plt.title('阈值敏感性（F1 vs 阈值）')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        th_path = self.output_dir / 'threshold_sensitivity.png'
+        plt.savefig(th_path, dpi=300, bbox_inches='tight')
+        plt.close()
+
+        # 稳定性分数直方图（正负样本）
+        plt.figure(figsize=(8,6))
+        plt.hist(stability_scores_dir[stability_labels==0], bins=40, alpha=0.6, label='正常')
+        plt.hist(stability_scores_dir[stability_labels==1], bins=40, alpha=0.6, label='异常')
+        plt.xlabel('Stability 异常分数(方向已统一)')
+        plt.ylabel('频次')
+        plt.title('Stability Score 分布（正负样本）')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        hist_path = self.output_dir / 'stability_score_hist.png'
+        plt.savefig(hist_path, dpi=300, bbox_inches='tight')
+        plt.close()
         
         # 计算性能指标
         # 在度量计算中也使用方向一致的稳定性分数
@@ -969,11 +1032,14 @@ class ModelEvaluator:
 
 ## 可视化结果
 
-本评估生成了以下可视化图表：
+        本评估生成了以下可视化图表：
 1. **质量稳定性分析图**: `quality_stability_analysis.png`
 2. **光谱重构对比图**: `spectral_reconstruction_comparison.png`
 3. **残差分析图**: `residual_analysis.png`
-4. **混淆矩阵和ROC曲线**: `confusion_matrix_and_roc.png`
+        4. **混淆矩阵和ROC曲线**: `confusion_matrix_and_roc.png`
+        5. **Precision-Recall曲线**: `pr_curves.png`
+        6. **阈值敏感性(F1 vs 阈值)**: `threshold_sensitivity.png`
+        7. **稳定性分数分布(正负样本)**: `stability_score_hist.png`
 
 ## 结论
 
