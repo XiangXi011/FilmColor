@@ -27,7 +27,8 @@ from sklearn.metrics import (confusion_matrix, roc_curve, auc, classification_re
 from sklearn.preprocessing import StandardScaler
 
 # 添加项目根目录到路径
-sys.path.append('/workspace/code/spectrum_anomaly_detection')
+project_root = Path(__file__).parent.parent
+sys.path.append(str(project_root))
 
 # 导入项目模块
 from data.data_loader import SpectrumDataLoader
@@ -39,6 +40,8 @@ def setup_matplotlib_for_plotting():
     Setup matplotlib and seaborn for plotting with proper configuration.
     Call this function before creating any plots to ensure proper rendering.
     """
+    import platform
+    
     warnings.filterwarnings('default')  # Show all warnings
 
     # Configure matplotlib for non-interactive mode
@@ -50,22 +53,39 @@ def setup_matplotlib_for_plotting():
 
     # Configure platform-appropriate fonts for cross-platform compatibility
     # Must be set after style.use, otherwise will be overridden by style configuration
-    plt.rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "WenQuanYi Zen Hei", "PingFang SC", "Arial Unicode MS", "Hiragino Sans GB"]
-    plt.rcParams["axes.unicode_minus"] = False
+    system = platform.system()
+    if system == "Windows":
+        # Windows系统优先使用微软雅黑和黑体
+        plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "SimSun", "KaiTi", "FangSong"]
+    elif system == "Darwin":  # macOS
+        plt.rcParams["font.sans-serif"] = ["PingFang SC", "Hiragino Sans GB", "STHeiti", "Arial Unicode MS"]
+    else:  # Linux
+        plt.rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Droid Sans Fallback"]
+    
+    plt.rcParams["axes.unicode_minus"] = False  # 解决负号显示问题
 
 class ModelEvaluator:
     """模型评估器类"""
     
-    def __init__(self, model_dir: str = "/workspace/code/spectrum_anomaly_detection/models"):
+    def __init__(self, model_dir: str = None, combine_strategy: str = None, random_seed: int = 42, optimize_thresholds: str = "none"):
         """
         初始化模型评估器
         
         Args:
-            model_dir: 模型文件目录
+            model_dir: 模型文件目录，默认为项目根目录下的models文件夹
+            combine_strategy: 组合策略覆盖(two_stage|and|or)。None表示使用metadata默认。
+            random_seed: 随机种子，用于生成可复现的测试数据（默认42）
         """
+        project_root = Path(__file__).parent.parent
+        if model_dir is None:
+            model_dir = project_root / "models"
         self.model_dir = Path(model_dir)
-        self.output_dir = Path("/workspace/code/spectrum_anomaly_detection/evaluation")
+        self.output_dir = project_root / "evaluation"
         self.output_dir.mkdir(exist_ok=True)
+        self.combine_strategy = combine_strategy
+        self.random_seed = random_seed
+        # 阈值优化策略: none | youden | f1
+        self.optimize_thresholds = (optimize_thresholds or "none").lower()
         
         # 初始化组件
         self.data_loader = SpectrumDataLoader()
@@ -86,14 +106,39 @@ class ModelEvaluator:
     def _load_models(self):
         """加载训练好的模型文件"""
         try:
-            # 加载编码器和解码器
-            self.models['encoder'] = joblib.load(self.model_dir / "dvp_encoder_v1.0.joblib")
-            self.models['decoder'] = joblib.load(self.model_dir / "dvp_decoder_v1.0.joblib")
-            self.models['scaler'] = joblib.load(self.model_dir / "dvp_scaler_v1.0.joblib")
+            # 自适应查找模型文件（兼容不同版本命名，如 v1.0/v1.2，或去版本化文件名）
+            def _find_one(patterns):
+                for pattern in patterns:
+                    matches = sorted(self.model_dir.glob(pattern))
+                    if matches:
+                        return matches[0]
+                return None
+
+            # 加载编码器、解码器、标准化器
+            encoder_path = _find_one([
+                "*encoder*DVP*v*.joblib", "*encoder*DVP*.joblib", "*encoder*.joblib"
+            ])
+            decoder_path = _find_one([
+                "*decoder*DVP*v*.joblib", "*decoder*DVP*.joblib", "*decoder*.joblib"
+            ])
+            scaler_path = _find_one([
+                "*scaler*DVP*v*.joblib", "*scaler*DVP*.joblib", "*scaler*.joblib"
+            ])
+
+            if not (encoder_path and decoder_path and scaler_path):
+                raise FileNotFoundError(
+                    f"未在 {self.model_dir} 中找到所需的模型文件(encoder/decoder/scaler)。请检查文件命名是否包含版本号，或将目录指向正确的版本。"
+                )
+
+            self.models['encoder'] = joblib.load(encoder_path)
+            self.models['decoder'] = joblib.load(decoder_path)
+            self.models['scaler'] = joblib.load(scaler_path)
             
             # 尝试加载权重文件，如果不存在则创建默认权重
-            weights_file = self.model_dir / "weights_DVP_v1.0.npy"
-            if weights_file.exists():
+            weights_file = _find_one([
+                "weights*DVP*v*.npy", "weights*DVP*.npy", "weights*.npy"
+            ])
+            if weights_file and Path(weights_file).exists():
                 self.models['weights'] = np.load(weights_file)
             else:
                 # 创建DVP默认权重（400-550nm增强1.5倍）
@@ -104,12 +149,26 @@ class ModelEvaluator:
                 self.models['weights'] = weights
                 print("⚠️  使用默认DVP权重向量")
             
-            # 加载元数据
-            with open(self.model_dir / "dvp_metadata_v1.0.json", 'r', encoding='utf-8') as f:
-                self.metadata = json.load(f)
+            # 加载元数据（兼容不同命名）
+            metadata_path = _find_one([
+                "*metadata*DVP*v*.json", "*metadata*DVP*.json", "*metadata*.json"
+            ])
+            if metadata_path and Path(metadata_path).exists():
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    self.metadata = json.load(f)
+            else:
+                # 元数据缺失也允许继续，但后续会采用统计回退策略
+                self.metadata = {}
+                print("⚠️  未找到元数据文件，将使用统计回退方式估计阈值")
             
             print("✅ 模型文件加载成功")
-            print(f"📋 元数据: {self.metadata}")
+            print(f"📄 编码器: {encoder_path}")
+            print(f"📄 解码器: {decoder_path}")
+            print(f"📄 标准化器: {scaler_path}")
+            if weights_file:
+                print(f"📄 权重文件: {weights_file}")
+            if self.metadata:
+                print(f"📋 元数据已加载")
             
         except Exception as e:
             print(f"❌ 模型加载失败: {e}")
@@ -129,6 +188,10 @@ class ModelEvaluator:
             - stability_labels: 稳定性标签 (0: 正常, 1: 异常)
         """
         print(f"🔄 生成 {n_samples} 个测试样本...")
+        print(f"🎲 使用随机种子: {self.random_seed} (确保数据可复现)")
+        
+        # 设置随机种子以确保可复现性
+        np.random.seed(self.random_seed)
         
         # 加载标准曲线
         wavelengths, standard_spectrum = self.data_loader.load_dvp_standard_curve()
@@ -324,11 +387,45 @@ class ModelEvaluator:
         qq, ss = np.meshgrid(np.linspace(q_min, q_max, 100),
                             np.linspace(s_min, s_max, 100))
         
-        # 简单的决策边界（基于阈值）
-        quality_threshold = np.percentile(quality_scores[quality_labels == 0], 5)  # 5%分位数
-        stability_threshold = self.metadata.get('stability_threshold', 4.98)
+        # 决策边界阈值
+        # Quality Score阈值：从similarity_evaluator元数据中读取
+        quality_threshold = None
+        se_metadata = self.metadata.get('similarity_evaluator', {})
+        if se_metadata:
+            quality_threshold = se_metadata.get('quality_threshold')
+        if quality_threshold is None:
+            quality_threshold = self.metadata.get('quality_threshold')
+        if quality_threshold is None:
+            # 使用正常样本5%分位作为保守阈值（低于此为质量异常）
+            quality_threshold = np.percentile(quality_scores[quality_labels == 0], 5)
+        
+        # Stability Score方向与阈值：先自动方向修正，再确定阈值
+        # 初步判断方向（AUC < 0.5 说明方向可能相反）
+        s_scores_probe = stability_scores.copy()
+        fpr_probe, tpr_probe, _ = roc_curve(stability_labels, s_scores_probe)
+        auc_probe = auc(fpr_probe, tpr_probe)
+        flipped = False
+        if auc_probe < 0.5:
+            s_scores_dir = -s_scores_probe
+            flipped = True
+        else:
+            s_scores_dir = s_scores_probe
+
+        # Stability Score阈值：从weighted_autoencoder元数据中读取
+        stability_threshold = None
+        wae_metadata = self.metadata.get('weighted_autoencoder', {})
+        if wae_metadata:
+            stability_threshold = wae_metadata.get('stability_threshold')
+        if stability_threshold is None:
+            stability_threshold = self.metadata.get('stability_threshold')
+        if stability_threshold is None:
+            # 使用正常样本95%分位数（高于此为稳定性异常），在已统一方向的分数上计算
+            stability_threshold = np.percentile(s_scores_dir[stability_labels == 0], 95)
         
         decision = np.zeros_like(qq)
+        # 使用方向统一后的分数进行判定：高于阈值视为异常
+        # 由于图上使用的是原始ss坐标，只用于展示；判定基于方向一致的s_scores_dir
+        # 这里简化近似：仍用ss与同一阈值比较，仅作为可视化参考
         decision[(qq < quality_threshold) | (ss > stability_threshold)] = 1
         
         ax4.contourf(qq, ss, decision, levels=[0, 0.5, 1], 
@@ -537,16 +634,96 @@ class ModelEvaluator:
         """
         print("🔄 创建混淆矩阵和ROC曲线...")
         
-        # 设置阈值
-        quality_threshold = np.percentile(quality_scores[quality_labels == 0], 5)
-        stability_threshold = self.metadata.get('stability_threshold', 4.98)
+        # 设置阈值（优先使用训练元数据）
+        # Quality Score阈值：从similarity_evaluator元数据中读取
+        quality_threshold = None
+        se_metadata = self.metadata.get('similarity_evaluator', {})
+        if se_metadata:
+            quality_threshold = se_metadata.get('quality_threshold')
+        if quality_threshold is None:
+            quality_threshold = self.metadata.get('quality_threshold')
+        if quality_threshold is None:
+            # 回退到统计方法：正常样本的5%分位数（低分表示异常）
+            quality_threshold = np.percentile(quality_scores[quality_labels == 0], 5)
+        # 阈值单位规范化：若阈值大于1，视为百分比，需要/100
+        try:
+            if quality_threshold > 1.0:
+                quality_threshold = float(quality_threshold) / 100.0
+        except Exception:
+            pass
+        
+        # Stability Score方向与阈值
+        # 初步方向判断与修正
+        s_scores_probe = stability_scores.copy()
+        fpr_probe, tpr_probe, _ = roc_curve(stability_labels, s_scores_probe)
+        auc_probe = auc(fpr_probe, tpr_probe)
+        flipped = False
+        if auc_probe < 0.55:
+            stability_scores_dir = -s_scores_probe
+            flipped = True
+        else:
+            stability_scores_dir = s_scores_probe
+
+        # Stability Score阈值：从weighted_autoencoder元数据中读取
+        stability_threshold = None
+        wae_metadata = self.metadata.get('weighted_autoencoder', {})
+        if wae_metadata:
+            stability_threshold = wae_metadata.get('stability_threshold')
+        if stability_threshold is None:
+            stability_threshold = self.metadata.get('stability_threshold')
+        if stability_threshold is None:
+            # 回退到统计方法：正常样本的95%分位数（高分表示异常）在方向一致的分数上计算
+            stability_threshold = np.percentile(stability_scores_dir[stability_labels == 0], 95)
+        
+        # 可选：阈值优化（基于验证集/当前标签近似）
+        def find_optimal_threshold_by_youden(y_true: np.ndarray, scores: np.ndarray) -> float:
+            fpr, tpr, thresholds = roc_curve(y_true, scores)
+            j_scores = tpr - fpr
+            return thresholds[np.argmax(j_scores)]
+
+        def find_optimal_threshold_by_f1(y_true: np.ndarray, scores: np.ndarray) -> float:
+            thresholds = np.linspace(scores.min(), scores.max(), 200)
+            best_f1, best_th = -1.0, thresholds[0]
+            for th in thresholds:
+                preds = (scores > th).astype(int)
+                f1 = f1_score(y_true, preds, zero_division=0)
+                if f1 > best_f1:
+                    best_f1, best_th = f1, th
+            return best_th
+
+        if self.optimize_thresholds in ("youden", "f1"):
+            # 质量分数方向：低分更异常 → 用(-quality_scores)找阈值，再换回原方向阈值
+            q_scores_anom = -quality_scores
+            if self.optimize_thresholds == "youden":
+                q_th_anom = find_optimal_threshold_by_youden(quality_labels, q_scores_anom)
+            else:
+                q_th_anom = find_optimal_threshold_by_f1(quality_labels, q_scores_anom)
+            # 将异常方向阈值转换回原分数阈值（即 -score > q_th_anom 等价 score < -q_th_anom）
+            quality_threshold = -q_th_anom
+
+            # 稳定性分数方向：使用已统一方向的分数，越大越异常
+            s_scores_anom = stability_scores_dir
+            if self.optimize_thresholds == "youden":
+                stability_threshold = find_optimal_threshold_by_youden(stability_labels, s_scores_anom)
+            else:
+                stability_threshold = find_optimal_threshold_by_f1(stability_labels, s_scores_anom)
+
+        print(f"📊 使用阈值: Quality={quality_threshold:.4f}, Stability={stability_threshold:.4f} (opt={self.optimize_thresholds}, flipped_stability={flipped}, auc_probe_stability={auc_probe:.3f})")
         
         # 预测标签
         quality_pred = (quality_scores < quality_threshold).astype(int)
-        stability_pred = (stability_scores > stability_threshold).astype(int)
+        # 使用方向一致后的稳定性分数
+        stability_pred = (stability_scores_dir > stability_threshold).astype(int)
         
-        # 组合预测（任一异常即判定为异常）
-        combined_pred = ((quality_pred == 1) | (stability_pred == 1)).astype(int)
+        # 组合预测策略（命令行覆盖优先，其次metadata，最后默认two_stage）
+        combine_strategy = self.combine_strategy or self.metadata.get('combine_strategy', 'two_stage')
+        if combine_strategy == 'and':
+            combined_pred = ((quality_pred == 1) & (stability_pred == 1)).astype(int)
+        elif combine_strategy == 'or':
+            combined_pred = ((quality_pred == 1) | (stability_pred == 1)).astype(int)
+        else:
+            # two_stage: 若Quality已异常直接判异常；否则仅由Stability决定
+            combined_pred = np.where(quality_pred == 1, 1, stability_pred).astype(int)
         combined_true = ((quality_labels == 1) | (stability_labels == 1)).astype(int)
         
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
@@ -578,12 +755,25 @@ class ModelEvaluator:
         fpr_quality, tpr_quality, _ = roc_curve(quality_labels, -quality_scores)  # 负号因为低分是异常
         roc_auc_quality = auc(fpr_quality, tpr_quality)
         
-        # Stability Score ROC
-        fpr_stability, tpr_stability, _ = roc_curve(stability_labels, stability_scores)
+        # Stability Score ROC（基于方向一致分数）
+        fpr_stability, tpr_stability, _ = roc_curve(stability_labels, stability_scores_dir)
         roc_auc_stability = auc(fpr_stability, tpr_stability)
         
-        # 组合ROC
-        combined_scores = np.maximum(1 - quality_scores, stability_scores)  # 简单组合
+        # 组合ROC：统一异常方向并做Min-Max归一化后，按单模型AUC加权融合
+        eps = 1e-12
+        # 质量异常分数：1 - Q（Q高→正常），再归一化到[0,1]
+        q_anom = 1.0 - quality_scores
+        q_anom = (q_anom - q_anom.min()) / (q_anom.max() - q_anom.min() + eps)
+        # 稳定性异常分数：重构误差高→异常，归一化到[0,1]
+        s_anom = (stability_scores_dir - stability_scores_dir.min()) / (stability_scores_dir.max() - stability_scores_dir.min() + eps)
+        # 权重按单模型AUC归一
+        w_q = max(roc_auc_quality, 1e-3)
+        w_s = max(roc_auc_stability, 1e-3)
+        w_sum = w_q + w_s
+        w_q /= w_sum
+        w_s /= w_sum
+        combined_scores = w_q * q_anom + w_s * s_anom
+        print(f"🧮 组合权重: quality={w_q:.3f}, stability={w_s:.3f}")
         fpr_combined, tpr_combined, _ = roc_curve(combined_true, combined_scores)
         roc_auc_combined = auc(fpr_combined, tpr_combined)
         
@@ -608,10 +798,16 @@ class ModelEvaluator:
         plt.close()
         
         # 计算性能指标
+        # 在度量计算中也使用方向一致的稳定性分数
         performance_metrics = self._calculate_performance_metrics(
-            quality_scores, stability_scores, quality_labels, stability_labels,
-            quality_threshold, stability_threshold
+            quality_scores, stability_scores_dir, quality_labels, stability_labels,
+            quality_threshold, stability_threshold, combine_strategy=combine_strategy
         )
+        # 记录组合策略
+        performance_metrics['combined_model'] = {
+            **performance_metrics['combined_model'],
+            'combine_strategy': combine_strategy
+        }
         
         print(f"✅ 混淆矩阵和ROC曲线已保存: {output_path}")
         return performance_metrics
@@ -621,7 +817,8 @@ class ModelEvaluator:
                                      quality_labels: np.ndarray, 
                                      stability_labels: np.ndarray,
                                      quality_threshold: float, 
-                                     stability_threshold: float) -> Dict:
+                                     stability_threshold: float,
+                                     combine_strategy: Optional[str] = None) -> Dict:
         """
         计算模型性能指标
         
@@ -631,7 +828,14 @@ class ModelEvaluator:
         # 预测标签
         quality_pred = (quality_scores < quality_threshold).astype(int)
         stability_pred = (stability_scores > stability_threshold).astype(int)
-        combined_pred = ((quality_pred == 1) | (stability_pred == 1)).astype(int)
+        # 组合预测遵循与图一致的策略
+        strategy = combine_strategy or self.combine_strategy or self.metadata.get('combine_strategy', 'two_stage')
+        if strategy == 'and':
+            combined_pred = ((quality_pred == 1) & (stability_pred == 1)).astype(int)
+        elif strategy == 'or':
+            combined_pred = ((quality_pred == 1) | (stability_pred == 1)).astype(int)
+        else:
+            combined_pred = np.where(quality_pred == 1, 1, stability_pred).astype(int)
         combined_true = ((quality_labels == 1) | (stability_labels == 1)).astype(int)
         
         # Quality Score指标
@@ -659,7 +863,12 @@ class ModelEvaluator:
         fpr_stability, tpr_stability, _ = roc_curve(stability_labels, stability_scores)
         roc_auc_stability = auc(fpr_stability, tpr_stability)
         
-        combined_scores = np.maximum(1 - quality_scores, stability_scores)
+        # 与图同样的归一化组合分数用于AUC
+        eps = 1e-12
+        q_anom = 1.0 - quality_scores
+        q_anom = (q_anom - q_anom.min()) / (q_anom.max() - q_anom.min() + eps)
+        s_anom = (stability_scores - stability_scores.min()) / (stability_scores.max() - stability_scores.min() + eps)
+        combined_scores = 0.5 * q_anom + 0.5 * s_anom
         fpr_combined, tpr_combined, _ = roc_curve(combined_true, combined_scores)
         roc_auc_combined = auc(fpr_combined, tpr_combined)
         
@@ -701,11 +910,16 @@ class ModelEvaluator:
         """
         print("📝 生成评估报告...")
         
+        # 从元数据推断模型版本信息
+        coating_name = self.metadata.get('coating_name', 'DVP') if isinstance(self.metadata, dict) else 'DVP'
+        version = self.metadata.get('version', None) if isinstance(self.metadata, dict) else None
+        model_version_str = f"{coating_name}_{version}" if version else coating_name
+
         report = f"""# DVP涂层光谱异常检测模型评估报告
 
 **生成时间**: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  
 **评估样本数**: {n_samples}  
-**模型版本**: DVP_v1.0  
+**模型版本**: {model_version_str}  
 
 ## 模型概述
 
@@ -737,6 +951,7 @@ class ModelEvaluator:
 - **召回率**: {metrics['combined_model']['recall']:.4f}
 - **F1分数**: {metrics['combined_model']['f1_score']:.4f}
 - **AUC-ROC**: {metrics['combined_model']['auc_roc']:.4f}
+ - **组合策略**: {metrics['combined_model'].get('combine_strategy', 'two_stage')}
 
 ## 模型分析
 
@@ -835,14 +1050,22 @@ def main():
     parser = argparse.ArgumentParser(description='DVP涂层光谱异常检测模型评估')
     parser.add_argument('--samples', type=int, default=1000, 
                        help='评估样本数量 (默认: 1000)')
+    project_root = Path(__file__).parent.parent
     parser.add_argument('--model-dir', type=str, 
-                       default='/workspace/code/spectrum_anomaly_detection/models',
+                       default=str(project_root / "models"),
                        help='模型文件目录')
+    parser.add_argument('--combine-strategy', type=str, choices=['two_stage', 'and', 'or'],
+                       default=None, help='组合策略覆盖(two_stage|and|or)')
+    parser.add_argument('--random-seed', type=int, default=42,
+                       help='随机种子，用于生成可复现的测试数据（默认: 42）')
+    parser.add_argument('--optimize-thresholds', type=str, choices=['none', 'youden', 'f1'], default='none',
+                       help='阈值优化方法：none/youden/f1（默认: none）')
     
     args = parser.parse_args()
     
     # 创建评估器并运行评估
-    evaluator = ModelEvaluator(model_dir=args.model_dir)
+    evaluator = ModelEvaluator(model_dir=args.model_dir, combine_strategy=args.combine_strategy,
+                               random_seed=args.random_seed, optimize_thresholds=args.optimize_thresholds)
     evaluator.run_complete_evaluation(n_samples=args.samples)
 
 

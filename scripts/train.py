@@ -67,8 +67,15 @@ class SpectrumAnomalyTrainer:
             'training_samples': 200,
             'validation_split': 0.2,
             'noise_levels': [0.05, 0.1, 0.15, 0.2],
-            'quality_threshold': 85.0,  # Quality Score阈值
-            'stability_threshold_percentile': 99.5,  # Stability Score阈值百分位
+            'quality_threshold': 92.0,  # 提高默认Quality Score阈值，降低误报
+            'stability_threshold_percentile': 99.9,  # 提高默认分位阈值，降低误报
+            'stability_threshold_method': 'percentile',  # 'percentile' | 'mad'
+            'stability_mad_k': 3.5,  # 当使用MAD法时的倍数
+            # 权重相关配置（可通过命令行覆盖）
+            'weights_base_range': [400.0, 680.0],  # 基础加权区间
+            'weights_base_value': 3.0,            # 基础权重值
+            'weights_peak_range': [400.0, 550.0], # 重点增强区间
+            'weights_peak_multiplier': 1.5,       # 重点区间倍率
             'random_seed': 42
         }
         
@@ -87,15 +94,18 @@ class SpectrumAnomalyTrainer:
         """
         weights = np.ones_like(wavelengths, dtype=np.float64)
         
-        # 基础权重: 400-680nm范围权重为3
-        mask = (wavelengths >= 400) & (wavelengths <= 680)
-        weights[mask] = 3.0
+        # 基础权重区间与数值
+        base_lo, base_hi = self.config.get('weights_base_range', [400.0, 680.0])
+        base_val = float(self.config.get('weights_base_value', 3.0))
+        mask = (wavelengths >= base_lo) & (wavelengths <= base_hi)
+        weights[mask] = base_val
         
-        # 根据涂层类型调整权重
+        # 重点增强区间
         if coating_name == "DVP":
-            # DVP涂层: 增强400-550nm波段的权重
-            peak_mask = (wavelengths >= 400) & (wavelengths <= 550)
-            weights[peak_mask] *= 1.5
+            peak_lo, peak_hi = self.config.get('weights_peak_range', [400.0, 550.0])
+            peak_mul = float(self.config.get('weights_peak_multiplier', 1.5))
+            peak_mask = (wavelengths >= peak_lo) & (wavelengths <= peak_hi)
+            weights[peak_mask] *= peak_mul
         
         # 归一化权重
         weights = weights / np.mean(weights)
@@ -135,22 +145,43 @@ class SpectrumAnomalyTrainer:
         Returns:
             tuple: (波长数组, 标准光谱数组)
         """
-        data_path = "/workspace/code/spectrum_anomaly_detection/data/dvp_processed_data.npz"
+        # 使用项目相对路径，兼容不同环境
+        project_root = Path(__file__).parent.parent
+        data_path = str(project_root / "data" / "dvp_processed_data.npz")
         
         if not os.path.exists(data_path):
             raise FileNotFoundError(f"标准曲线数据文件不存在: {data_path}")
         
         data = np.load(data_path)
+        # 基本数据校验
+        if 'wavelengths' not in data or 'dvp_values' not in data:
+            raise ValueError("NPZ缺少必须字段: wavelengths 或 dvp_values")
         wavelengths = data['wavelengths']
+        if np.isnan(wavelengths).any():
+            raise ValueError("wavelengths 含有 NaN")
         
-        # 根据涂层名称选择对应的标准光谱
+        # 根据涂层名称选择对应数据矩阵（样本数 × 波长数）
         if self.coating_name == "DVP":
-            standard_spectrum = data['dvp_values']
+            spectra = data['dvp_values']
         else:
-            # 如果是其他涂层，需要加载对应的标准曲线
-            # 这里暂时使用DVP作为示例
-            standard_spectrum = data['dvp_values']
-            logger.warning(f"涂层 {self.coating_name} 使用DVP标准曲线作为示例")
+            spectra = data['dvp_values']
+            logger.warning(f"涂层 {self.coating_name} 使用DVP数据作为示例")
+
+        # 当输入为样本矩阵时，需汇聚为一条标准曲线（长度==波长数）
+        if spectra.ndim == 2:
+            if spectra.shape[1] != len(wavelengths):
+                raise ValueError(f"光谱矩阵列数({spectra.shape[1]})与波长数({len(wavelengths)})不一致")
+            if np.isnan(spectra).any():
+                raise ValueError("光谱矩阵含有 NaN")
+            # 采用中位数更稳健（防异常值），也可切换为均值
+            agg = getattr(self, 'std_curve_agg', 'median')
+            if agg == 'mean':
+                standard_spectrum = np.mean(spectra, axis=0)
+            else:
+                standard_spectrum = np.median(spectra, axis=0)
+            logger.info(f"从 {spectra.shape[0]} 条样本汇聚得到标准曲线（使用 {agg}）")
+        else:
+            standard_spectrum = spectra
         
         logger.info(f"标准曲线加载完成: {len(wavelengths)}个波长点")
         return wavelengths, standard_spectrum
@@ -358,9 +389,17 @@ class SpectrumAnomalyTrainer:
         train_errors = calculate_reconstruction_errors(X_train_ae)
         val_errors = calculate_reconstruction_errors(X_val_ae)
         
-        # 计算阈值
-        threshold_percentile = self.config['stability_threshold_percentile']
-        stability_threshold = np.percentile(val_errors, threshold_percentile)
+        # 计算阈值（支持分位数或MAD稳健方法）
+        method = self.config.get('stability_threshold_method', 'percentile')
+        if method == 'mad':
+            median = np.median(val_errors)
+            mad = np.median(np.abs(val_errors - median)) + 1e-12
+            k = float(self.config.get('stability_mad_k', 3.5))
+            stability_threshold = float(median + k * 1.4826 * mad)
+            threshold_percentile = None
+        else:
+            threshold_percentile = float(self.config['stability_threshold_percentile'])
+            stability_threshold = float(np.percentile(val_errors, threshold_percentile))
         
         autoencoder_result = {
             'encoder_score': float(encoder.score(X_train_ae, X_train_ae)),
@@ -368,6 +407,7 @@ class SpectrumAnomalyTrainer:
             'train_errors': train_errors.tolist(),
             'val_errors': val_errors.tolist(),
             'stability_threshold': float(stability_threshold),
+            'threshold_method': method,
             'threshold_percentile': threshold_percentile,
             'error_stats': {
                 'train_mean': float(train_errors.mean()),
@@ -380,7 +420,10 @@ class SpectrumAnomalyTrainer:
         logger.info(f"WeightedAutoencoder训练完成:")
         logger.info(f"  - 编码器R²: {autoencoder_result['encoder_score']:.4f}")
         logger.info(f"  - 解码器R²: {autoencoder_result['decoder_score']:.4f}")
-        logger.info(f"  - 稳定性阈值: {stability_threshold:.6f} ({threshold_percentile}%分位数)")
+        if method == 'mad':
+            logger.info(f"  - 稳定性阈值: {stability_threshold:.6f} (MAD法 k={self.config.get('stability_mad_k', 3.5)})")
+        else:
+            logger.info(f"  - 稳定性阈值: {stability_threshold:.6f} ({threshold_percentile}%分位数)")
         
         return autoencoder_result, encoder, decoder, scaler, weights
     
@@ -440,9 +483,11 @@ class SpectrumAnomalyTrainer:
             },
             'weighted_autoencoder': {
                 'stability_threshold': autoencoder_result['stability_threshold'],
-                'threshold_percentile': autoencoder_result['threshold_percentile'],
+                'threshold_method': autoencoder_result.get('threshold_method', 'percentile'),
+                'threshold_percentile': autoencoder_result.get('threshold_percentile'),
                 'error_stats': autoencoder_result['error_stats']
             },
+            'combine_strategy': 'two_stage',
             'model_architecture': {
                 'input_dim': 81,
                 'encoder_dims': [48, 16, 4],
@@ -580,10 +625,26 @@ def main():
                        help='模型版本号 (默认: v1.0)')
     parser.add_argument('--training_samples', type=int, default=200,
                        help='训练样本数量 (默认: 200)')
-    parser.add_argument('--quality_threshold', type=float, default=85.0,
-                       help='Quality Score阈值 (默认: 85.0)')
-    parser.add_argument('--stability_threshold_percentile', type=float, default=99.5,
-                       help='Stability Score阈值百分位 (默认: 99.5)')
+    parser.add_argument('--quality_threshold', type=float, default=92.0,
+                       help='Quality Score阈值 (默认: 92.0)')
+    parser.add_argument('--stability_threshold_percentile', type=float, default=99.9,
+                       help='Stability Score阈值百分位 (默认: 99.9)')
+    parser.add_argument('--stability_threshold_method', type=str, default='percentile',
+                       choices=['percentile', 'mad'],
+                       help='稳定性阈值方法：percentile 或 mad (默认: percentile)')
+    parser.add_argument('--stability_mad_k', type=float, default=3.5,
+                       help='MAD法的k倍数 (默认: 3.5)')
+    parser.add_argument('--std_curve_agg', type=str, choices=['median','mean'], default='median',
+                       help='标准曲线汇聚方法（median/mean），默认median')
+    # 权重相关
+    parser.add_argument('--weights_base_range', type=float, nargs=2, metavar=('LO','HI'),
+                       default=None, help='基础权重区间，例如 400 680')
+    parser.add_argument('--weights_base_value', type=float, default=None,
+                       help='基础权重值，例如 3.0')
+    parser.add_argument('--weights_peak_range', type=float, nargs=2, metavar=('LO','HI'),
+                       default=None, help='重点增强区间，例如 400 550')
+    parser.add_argument('--weights_peak_multiplier', type=float, default=None,
+                       help='重点区间倍率，例如 1.5')
     
     args = parser.parse_args()
     
@@ -594,10 +655,23 @@ def main():
     trainer.config.update({
         'training_samples': args.training_samples,
         'quality_threshold': args.quality_threshold,
-        'stability_threshold_percentile': args.stability_threshold_percentile
+        'stability_threshold_percentile': args.stability_threshold_percentile,
+        'stability_threshold_method': args.stability_threshold_method,
+        'stability_mad_k': args.stability_mad_k,
     })
+    # 覆盖权重配置（仅当提供时）
+    if args.weights_base_range is not None:
+        trainer.config['weights_base_range'] = args.weights_base_range
+    if args.weights_base_value is not None:
+        trainer.config['weights_base_value'] = args.weights_base_value
+    if args.weights_peak_range is not None:
+        trainer.config['weights_peak_range'] = args.weights_peak_range
+    if args.weights_peak_multiplier is not None:
+        trainer.config['weights_peak_multiplier'] = args.weights_peak_multiplier
     
-    logger.info(f"训练配置: {trainer.config}")
+    # 传递标准曲线汇聚方法
+    setattr(trainer, 'std_curve_agg', args.std_curve_agg)
+    logger.info(f"训练配置: {trainer.config} | 标准曲线聚合: {args.std_curve_agg}")
     
     # 执行训练
     result = trainer.train()

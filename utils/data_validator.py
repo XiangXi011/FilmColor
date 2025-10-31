@@ -21,6 +21,7 @@ def setup_matplotlib_for_plotting():
     Call this function before creating any plots to ensure proper rendering.
     """
     import warnings
+    import platform
     
     # Ensure warnings are printed
     warnings.filterwarnings('default')  # Show all warnings
@@ -34,8 +35,16 @@ def setup_matplotlib_for_plotting():
 
     # Configure platform-appropriate fonts for cross-platform compatibility
     # Must be set after style.use, otherwise will be overridden by style configuration
-    plt.rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "WenQuanYi Zen Hei", "PingFang SC", "Arial Unicode MS", "Hiragino Sans GB"]
-    plt.rcParams["axes.unicode_minus"] = False
+    system = platform.system()
+    if system == "Windows":
+        # Windows系统优先使用微软雅黑和黑体
+        plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "SimSun", "KaiTi", "FangSong"]
+    elif system == "Darwin":  # macOS
+        plt.rcParams["font.sans-serif"] = ["PingFang SC", "Hiragino Sans GB", "STHeiti", "Arial Unicode MS"]
+    else:  # Linux
+        plt.rcParams["font.sans-serif"] = ["Noto Sans CJK SC", "WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Droid Sans Fallback"]
+    
+    plt.rcParams["axes.unicode_minus"] = False  # 解决负号显示问题
 
 class SpectrumValidator:
     """光谱数据验证器"""
