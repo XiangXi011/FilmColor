@@ -74,15 +74,20 @@ class SpectrumAnomalyTrainer:
             # 权重相关配置（可通过命令行覆盖）
             'weights_base_range': [400.0, 680.0],  # 基础加权区间
             'weights_base_value': 3.0,            # 基础权重值
-            'weights_peak_range': [400.0, 550.0], # 重点增强区间
+            'weights_peak_range': [400.0, 560.0], # 重点增强区间（微调上限）
             'weights_peak_multiplier': 1.5,       # 重点区间倍率
+            'weights_mode': 'static',             # static | variance | variance_smooth | hybrid
+            'weights_mix_alpha': 0.7,             # hybrid: w = alpha*static + (1-alpha)*variance_smooth
+            'weights_smooth_pctl_lo': 5.0,        # variance_smooth: winsorize下限百分位
+            'weights_smooth_pctl_hi': 95.0,       # variance_smooth: winsorize上限百分位
+            'weights_smooth_window': 5,           # variance_smooth: 滑动窗口大小(奇数)
             'random_seed': 42,
             # AE默认固化配置（无需每次传参）
             'ae_encoder_layers': [64, 32, 16, 8],
             'ae_decoder_layers': [16, 32, 64, 81],
-            'ae_alpha': 1e-4,
+            'ae_alpha': 2e-4,
             'ae_early_stopping': True,
-            'ae_n_iter_no_change': 10,
+            'ae_n_iter_no_change': 12,
             'ae_validation_fraction': 0.1
         }
         
@@ -109,7 +114,7 @@ class SpectrumAnomalyTrainer:
         
         # 重点增强区间
         if coating_name == "DVP":
-            peak_lo, peak_hi = self.config.get('weights_peak_range', [400.0, 550.0])
+            peak_lo, peak_hi = self.config.get('weights_peak_range', [400.0, 560.0])
             peak_mul = float(self.config.get('weights_peak_multiplier', 1.5))
             peak_mask = (wavelengths >= peak_lo) & (wavelengths <= peak_hi)
             weights[peak_mask] *= peak_mul
@@ -129,6 +134,62 @@ class SpectrumAnomalyTrainer:
         Returns:
             np.ndarray: 权重向量
         """
+        # 按配置选择权重模式
+        mode = (self.config.get('weights_mode') or 'static').lower()
+        if mode in ('variance', 'variance_smooth', 'hybrid'):
+            # 基于训练数据NPZ矩阵的波长方差构造权重：w ∝ 1/(std+eps)
+            try:
+                project_root = Path(__file__).parent.parent
+                default_path = str(project_root / "data" / "dvp_processed_data.npz")
+                data_path = getattr(self, 'data_npz_path', None) or default_path
+                data = np.load(data_path)
+                spectra = data['dvp_values']
+                if spectra.ndim == 2 and spectra.shape[1] == len(wavelengths):
+                    std = np.std(spectra, axis=0)
+                    # winsorize截断
+                    if mode in ('variance_smooth', 'hybrid'):
+                        lo = float(self.config.get('weights_smooth_pctl_lo', 5.0))
+                        hi = float(self.config.get('weights_smooth_pctl_hi', 95.0))
+                        lo_v = np.percentile(std, lo)
+                        hi_v = np.percentile(std, hi)
+                        std = np.clip(std, lo_v, hi_v)
+                    eps = 1e-8
+                    inv_std = 1.0 / (std + eps)
+                    weights_var = inv_std.astype(np.float64)
+                    # 平滑
+                    if mode in ('variance_smooth', 'hybrid'):
+                        win = int(self.config.get('weights_smooth_window', 5))
+                        win = max(1, win)
+                        if win > 1:
+                            # 简单移动平均
+                            kernel = np.ones(win, dtype=np.float64) / win
+                            pad = win // 2
+                            padded = np.pad(weights_var, (pad, pad), mode='edge')
+                            weights_var = np.convolve(padded, kernel, mode='valid')
+                    # 归一化
+                    weights_var = weights_var / np.mean(weights_var)
+                    if mode == 'hybrid':
+                        # 计算static权重
+                        w_static = np.ones_like(wavelengths, dtype=np.float64)
+                        base_lo, base_hi = self.config.get('weights_base_range', [400.0, 680.0])
+                        base_val = float(self.config.get('weights_base_value', 3.0))
+                        mask = (wavelengths >= base_lo) & (wavelengths <= base_hi)
+                        w_static[mask] = base_val
+                        if coating_name == "DVP":
+                            peak_lo, peak_hi = self.config.get('weights_peak_range', [400.0, 560.0])
+                            peak_mul = float(self.config.get('weights_peak_multiplier', 1.5))
+                            peak_mask = (wavelengths >= peak_lo) & (wavelengths <= peak_hi)
+                            w_static[peak_mask] *= peak_mul
+                        w_static = w_static / np.mean(w_static)
+                        alpha = float(self.config.get('weights_mix_alpha', 0.7))
+                        weights = alpha * w_static + (1.0 - alpha) * weights_var
+                        weights = weights / np.mean(weights)
+                        return weights
+                    else:
+                        return weights_var
+            except Exception:
+                pass  # 回退到static
+
         weights = np.ones_like(wavelengths, dtype=np.float64)
         
         # 基础权重: 400-680nm范围权重为3
@@ -137,8 +198,8 @@ class SpectrumAnomalyTrainer:
         
         # 根据涂层类型调整权重
         if coating_name == "DVP":
-            # DVP涂层: 增强400-550nm波段的权重
-            peak_mask = (wavelengths >= 400) & (wavelengths <= 550)
+            # DVP涂层: 增强400-560nm波段的权重
+            peak_mask = (wavelengths >= 400) & (wavelengths <= 560)
             weights[peak_mask] *= 1.5
         
         # 归一化权重
@@ -519,6 +580,18 @@ class SpectrumAnomalyTrainer:
                 'latent_dim': 4
             }
         }
+        # 记录权重模式与关键参数
+        metadata['weighted_autoencoder']['weights_mode'] = self.config.get('weights_mode', 'static')
+        metadata['weighted_autoencoder']['weights_params'] = {
+            'mix_alpha': self.config.get('weights_mix_alpha', 0.7),
+            'smooth_pctl_lo': self.config.get('weights_smooth_pctl_lo', 5.0),
+            'smooth_pctl_hi': self.config.get('weights_smooth_pctl_hi', 95.0),
+            'smooth_window': self.config.get('weights_smooth_window', 5),
+            'base_range': self.config.get('weights_base_range', [400.0, 680.0]),
+            'base_value': self.config.get('weights_base_value', 3.0),
+            'peak_range': self.config.get('weights_peak_range', [400.0, 560.0]),
+            'peak_multiplier': self.config.get('weights_peak_multiplier', 1.5),
+        }
         
         metadata_path = coating_dir / f"metadata_{self.coating_name}_{self.version}.json"
         with open(metadata_path, 'w', encoding='utf-8') as f:
@@ -662,6 +735,16 @@ def main():
                        help='标准曲线汇聚方法（median/mean），默认median')
     parser.add_argument('--data-npz', type=str, default=None,
                        help='自定义训练数据NPZ路径（包含 wavelengths, dvp_values）')
+    parser.add_argument('--weights-mode', type=str, default='static', choices=['static','variance','variance_smooth','hybrid'],
+                       help='权重模式：static 固定；variance 方差倒数；variance_smooth 方差倒数+截断+平滑；hybrid 混合')
+    parser.add_argument('--weights-mix-alpha', type=float, default=0.7,
+                       help='hybrid混合权重α，越大越偏向static (默认0.7)')
+    parser.add_argument('--weights-smooth-pctl-lo', type=float, default=5.0,
+                       help='variance_smooth 截断下百分位 (默认5)')
+    parser.add_argument('--weights-smooth-pctl-hi', type=float, default=95.0,
+                       help='variance_smooth 截断上百分位 (默认95)')
+    parser.add_argument('--weights-smooth-window', type=int, default=5,
+                       help='variance_smooth 平滑窗口(奇数，默认5)')
     # AE参数
     parser.add_argument('--ae-encoder-layers', type=int, nargs='+', default=None,
                        help='AE编码器层，如 64 32 16 8')
@@ -694,6 +777,11 @@ def main():
         'stability_threshold_method': args.stability_threshold_method,
         'stability_mad_k': args.stability_mad_k,
     })
+    trainer.config['weights_mode'] = (args.weights_mode or 'static')
+    trainer.config['weights_mix_alpha'] = args.weights_mix_alpha
+    trainer.config['weights_smooth_pctl_lo'] = args.weights_smooth_pctl_lo
+    trainer.config['weights_smooth_pctl_hi'] = args.weights_smooth_pctl_hi
+    trainer.config['weights_smooth_window'] = args.weights_smooth_window
     # 覆盖权重配置（仅当提供时）
     if args.weights_base_range is not None:
         trainer.config['weights_base_range'] = args.weights_base_range

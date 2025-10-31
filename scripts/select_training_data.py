@@ -95,7 +95,7 @@ def main():
     parser.add_argument('--high-sim', type=float, default=None, help='高置信相似度阈值（0-1）')
     parser.add_argument('--high-pearson', type=float, default=None, help='高置信加权皮尔逊阈值（-1~1）')
     parser.add_argument('--sim-min-pctl', type=float, default=35.0, help='相似度下限分位数(%)，当未显式提供sim-min时生效')
-    parser.add_argument('--pearson-min-pctl', type=float, default=35.0, help='皮尔逊下限分位数(%)，当未显式提供pearson-min时生效')
+    parser.add_argument('--pearson-min-pctl', type=float, default=40.0, help='皮尔逊下限分位数(%)，当未显式提供pearson-min时生效')
     parser.add_argument('--high-sim-pctl', type=float, default=85.0, help='相似度高置信分位数(%)，当未显式提供high-sim时生效')
     parser.add_argument('--high-pearson-pctl', type=float, default=90.0, help='皮尔逊高置信分位数(%)，当未显式提供high-pearson时生效')
     parser.add_argument('--edge-max-ratio', type=float, default=0.2, help='边缘占比(相对于高置信数量)，当高置信=0时不生效')

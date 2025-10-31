@@ -2,30 +2,30 @@
   "training_summary": {
     "coating_name": "DVP",
     "version": "v1.0",
-    "training_date": "2025-10-30T19:07:38.513952",
-    "training_time_seconds": 0.908796,
+    "training_date": "2025-10-31T00:44:00.771590",
+    "training_time_seconds": 0.601007,
     "status": "COMPLETED"
   },
   "similarity_evaluator": {
-    "quality_threshold": 85.0,
+    "quality_threshold": 92.0,
     "normal_scores_distribution": {
-      "mean": 81.70615833090125,
-      "std": 14.695528096578421,
-      "min": 51.94224786162829,
-      "max": 97.16563470485873,
-      "percentile_5": 58.05626051429852,
-      "percentile_95": 96.71617594517697
+      "mean": 86.66880607517088,
+      "std": 12.682875895986962,
+      "min": 54.6607910437368,
+      "max": 97.31610019947723,
+      "percentile_5": 58.21186800997103,
+      "percentile_95": 96.96288193695273
     },
     "description": "基于专家规则的质量评估，阈值用于判断光谱是否符合标准"
   },
   "weighted_autoencoder": {
-    "stability_threshold": 4.977571029778898,
-    "threshold_percentile": 99.5,
+    "stability_threshold": 0.8489044997931291,
+    "threshold_percentile": null,
     "error_distribution": {
-      "train_mean": 0.352380817236067,
-      "train_std": 0.6055727467652638,
-      "val_mean": 1.403455982214808,
-      "val_std": 1.6862218051546938
+      "train_mean": 0.4180777919407343,
+      "train_std": 0.965617420390408,
+      "val_mean": 1.9627758790833536,
+      "val_std": 3.291829172895098
     },
     "description": "基于机器学习的稳定性评估，阈值用于检测过程异常"
   },

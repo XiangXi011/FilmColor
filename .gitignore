@@ -1,3 +1,9 @@
+# Ignore problematic or redundant metadata duplicates on Windows
+models/DVP/**/dvp_metadata_v1.0.json
+
+# Ignore local evaluation release archives if needed (uncomment to ignore)
+# evaluation/releases/**
+
 # Python
 __pycache__/
 *.py[cod]

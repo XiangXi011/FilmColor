@@ -1,0 +1,67 @@
+{
+  "coating_name": "DVP",
+  "version": "v1.2",
+  "training_date": "2025-10-31T10:44:39.095317",
+  "config": {
+    "training_samples": 200,
+    "validation_split": 0.2,
+    "noise_levels": [
+      0.05,
+      0.1,
+      0.15,
+      0.2
+    ],
+    "quality_threshold": 92.0,
+    "stability_threshold_percentile": 99.9,
+    "stability_threshold_method": "percentile",
+    "stability_mad_k": 3.5,
+    "weights_base_range": [
+      400.0,
+      680.0
+    ],
+    "weights_base_value": 3.0,
+    "weights_peak_range": [
+      400.0,
+      550.0
+    ],
+    "weights_peak_multiplier": 1.5,
+    "random_seed": 42
+  },
+  "similarity_evaluator": {
+    "quality_threshold": 92.0,
+    "normal_scores_stats": {
+      "mean": 86.61484134149683,
+      "std": 12.780351342146375,
+      "min": 54.33006227265936,
+      "max": 97.3154809779643,
+      "percentile_5": 57.910713678048765,
+      "percentile_95": 96.96215882517335
+    }
+  },
+  "weighted_autoencoder": {
+    "stability_threshold": 10.130254945274485,
+    "threshold_method": "percentile",
+    "threshold_percentile": 99.9,
+    "error_stats": {
+      "train_mean": 0.4180777919407343,
+      "train_std": 0.9656174203904077,
+      "val_mean": 1.9627758790833507,
+      "val_std": 3.2918291728950937
+    }
+  },
+  "combine_strategy": "two_stage",
+  "model_architecture": {
+    "input_dim": 81,
+    "encoder_dims": [
+      48,
+      16,
+      4
+    ],
+    "decoder_dims": [
+      16,
+      48,
+      81
+    ],
+    "latent_dim": 4
+  }
+}

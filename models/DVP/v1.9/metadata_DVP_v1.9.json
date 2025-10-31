@@ -1,0 +1,83 @@
+{
+  "coating_name": "DVP",
+  "version": "v1.9",
+  "training_date": "2025-10-31T16:33:06.789107",
+  "config": {
+    "training_samples": 200,
+    "validation_split": 0.2,
+    "noise_levels": [
+      0.05,
+      0.1,
+      0.15,
+      0.2
+    ],
+    "quality_threshold": 92.0,
+    "stability_threshold_percentile": 99.9,
+    "stability_threshold_method": "percentile",
+    "stability_mad_k": 3.5,
+    "weights_base_range": [
+      400.0,
+      680.0
+    ],
+    "weights_base_value": 3.0,
+    "weights_peak_range": [
+      400.0,
+      560.0
+    ],
+    "weights_peak_multiplier": 1.5,
+    "random_seed": 42,
+    "ae_encoder_layers": [
+      64,
+      32,
+      16,
+      8
+    ],
+    "ae_decoder_layers": [
+      16,
+      32,
+      64,
+      81
+    ],
+    "ae_alpha": 0.0002,
+    "ae_early_stopping": true,
+    "ae_n_iter_no_change": 12,
+    "ae_validation_fraction": 0.1
+  },
+  "similarity_evaluator": {
+    "quality_threshold": 92.0,
+    "normal_scores_stats": {
+      "mean": 86.59187832455467,
+      "std": 12.820529321516362,
+      "min": 54.1592715000268,
+      "max": 97.31520797634663,
+      "percentile_5": 57.6784547678159,
+      "percentile_95": 96.96178673597593
+    }
+  },
+  "weighted_autoencoder": {
+    "stability_threshold": 2.0869951610125788,
+    "threshold_method": "percentile",
+    "threshold_percentile": 99.9,
+    "error_stats": {
+      "train_mean": 1.0351323988326837,
+      "train_std": 0.8013427233097442,
+      "val_mean": 0.8233019795310409,
+      "val_std": 0.6388369451944522
+    }
+  },
+  "combine_strategy": "two_stage",
+  "model_architecture": {
+    "input_dim": 81,
+    "encoder_dims": [
+      48,
+      16,
+      4
+    ],
+    "decoder_dims": [
+      16,
+      48,
+      81
+    ],
+    "latent_dim": 4
+  }
+}

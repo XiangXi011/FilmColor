@@ -1,9 +1,9 @@
 {
   "coating_name": "DVP",
   "version": "v1.0",
-  "training_date": "2025-10-30T19:07:38.501231",
+  "training_date": "2025-10-31T00:44:00.768624",
   "config": {
-    "training_samples": 100,
+    "training_samples": 200,
     "validation_split": 0.2,
     "noise_levels": [
       0.05,
@@ -11,31 +11,45 @@
       0.15,
       0.2
     ],
-    "quality_threshold": 85.0,
-    "stability_threshold_percentile": 99.5,
+    "quality_threshold": 92.0,
+    "stability_threshold_percentile": 99.9,
+    "stability_threshold_method": "mad",
+    "stability_mad_k": 3.5,
+    "weights_base_range": [
+      400.0,
+      680.0
+    ],
+    "weights_base_value": 3.0,
+    "weights_peak_range": [
+      400.0,
+      550.0
+    ],
+    "weights_peak_multiplier": 1.5,
     "random_seed": 42
   },
   "similarity_evaluator": {
-    "quality_threshold": 85.0,
+    "quality_threshold": 92.0,
     "normal_scores_stats": {
-      "mean": 81.70615833090125,
-      "std": 14.695528096578421,
-      "min": 51.94224786162829,
-      "max": 97.16563470485873,
-      "percentile_5": 58.05626051429852,
-      "percentile_95": 96.71617594517697
+      "mean": 86.66880607517088,
+      "std": 12.682875895986962,
+      "min": 54.6607910437368,
+      "max": 97.31610019947723,
+      "percentile_5": 58.21186800997103,
+      "percentile_95": 96.96288193695273
     }
   },
   "weighted_autoencoder": {
-    "stability_threshold": 4.977571029778898,
-    "threshold_percentile": 99.5,
+    "stability_threshold": 0.8489044997931291,
+    "threshold_method": "mad",
+    "threshold_percentile": null,
     "error_stats": {
-      "train_mean": 0.352380817236067,
-      "train_std": 0.6055727467652638,
-      "val_mean": 1.403455982214808,
-      "val_std": 1.6862218051546938
+      "train_mean": 0.4180777919407343,
+      "train_std": 0.965617420390408,
+      "val_mean": 1.9627758790833536,
+      "val_std": 3.291829172895098
     }
   },
+  "combine_strategy": "two_stage",
   "model_architecture": {
     "input_dim": 81,
     "encoder_dims": [

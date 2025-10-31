@@ -72,6 +72,103 @@ python test_phase3.py
 
 # 5. 启动API服务器
 python api_server.py
+### 方式三：模型训练与评估一键流程（更新：支持三分集导出/一键流水线/健康度监控）
+
+1) 数据筛选（分位数阈值 + 多历史剔除 + 分组限额 + train/val/test 拆分）
+```
+python scripts/select_training_data.py \
+  --input data/all_data.csv \
+  --output-dir data/selection_v3 \
+  --edge-max-ratio 0.25 --edge-max-ratio-total 0.10 --edge-max-abs 5000 \
+  --edge-sort-by mix --group-col BatchId --per-group-cap 200 \
+  --exclude-index data/selection_v2/train_index.csv
+```
+
+2) 导出训练子集（标准网格NPZ；亦支持一次性导出三分集）
+```
+python scripts/export_training_subset.py \
+  --input data/all_data.csv \
+  --index-dir data/selection_v3 \
+  --output-dir data/selection_v3/export
+```
+
+3) 训练
+```
+python scripts/train.py --coating_name DVP --version v1.5 \
+  --data-npz data/selection_v3/export/training_subset.npz \
+  --std_curve_agg median
+```
+
+4) 评估（默认F1阈值优化、稳定性自动方向修正、AUC加权融合；可选残差通道融合）
+```
+python scripts/evaluate.py --samples 1000 --random-seed 42 \
+  --model-dir models/DVP/v1.5
+
+### 新增脚本与能力（2025-10-31）
+
+- 一键流水线（筛选→导出→训练→评估）
+```bash
+python scripts/pipeline_oneclick.py \
+  --input-csv data/all_data.csv \
+  --work-dir data/selection_vX \
+  --export-dir data/selection_vX/export \
+  --model-version vX.Y
+```
+
+- 预测（批量推断/运营阈值）
+```bash
+# 固定阈值覆盖
+python scripts/predict.py \
+  --model-dir models/DVP/vX.Y \
+  --input-csv data/predict.csv \
+  --output-csv output/predict.csv \
+  --quality-threshold 0.92 --stability-threshold 2.1
+
+# 按批次分位阈值（更贴近容错）
+python scripts/predict.py \
+  --model-dir models/DVP/vX.Y \
+  --input-csv data/predict.csv \
+  --output-csv output/predict.csv \
+  --quality-pctl 10 --stability-pctl 97.5
+```
+
+- 主动学习（TopK不确定 + 导出训练格式光谱）
+```bash
+python scripts/suggest_label_candidates.py \
+  --model-dir models/DVP/vX.Y \
+  --input-csv data/predict.csv \
+  --top-k 500 \
+  --output-csv output/active_label_suggestions.csv \
+  --export-spectra-csv output/active_label_spectra.csv
+```
+
+- 残差分类器（少量标注半监督）
+```bash
+python scripts/train_residual_classifier.py \
+  --model-dir models/DVP/vX.Y \
+  --input-csv data/labeled_spectra.csv \
+  --output-dir models/DVP/vX.Y/residual_clf
+
+# 预测融合
+python scripts/predict.py \
+  --model-dir models/DVP/vX.Y \
+  --input-csv data/predict.csv \
+  --output-csv output/predict.csv \
+  --residual-clf models/DVP/vX.Y/residual_clf/residual_logistic.joblib \
+  --residual-fuse-mode weighted --residual-weight 0.5
+```
+
+- 健康度（无阈值趋势监控）
+```bash
+python scripts/health_monitor.py \
+  --model-dir models/DVP/vX.Y \
+  --input-csv data/line_stream.csv \
+  --window 100 --alpha 0.2 --wq 0.7 --ws 0.3 \
+  --output-csv output/line_health_timeseries.csv \
+  --output-png output/line_health_chart.png
+```
+```
+
 ```
 
 ## 📖 API使用示例

@@ -1,0 +1,44 @@
+{
+  "training_summary": {
+    "coating_name": "DVP",
+    "version": "v1.7",
+    "training_date": "2025-10-31T16:12:14.046732",
+    "training_time_seconds": 1.125597,
+    "status": "COMPLETED"
+  },
+  "similarity_evaluator": {
+    "quality_threshold": 92.0,
+    "normal_scores_distribution": {
+      "mean": 86.58362713888224,
+      "std": 12.835641355146201,
+      "min": 54.11418002891142,
+      "max": 97.31510973932889,
+      "percentile_5": 57.64333020508374,
+      "percentile_95": 96.96169526900329
+    },
+    "description": "基于专家规则的质量评估，阈值用于判断光谱是否符合标准"
+  },
+  "weighted_autoencoder": {
+    "stability_threshold": 2.0869951610125814,
+    "threshold_percentile": 99.9,
+    "error_distribution": {
+      "train_mean": 1.0351323988326828,
+      "train_std": 0.8013427233097435,
+      "val_mean": 0.8233019795310407,
+      "val_std": 0.6388369451944522
+    },
+    "description": "基于机器学习的稳定性评估，阈值用于检测过程异常"
+  },
+  "model_files": {
+    "encoder": "/workspace/code/spectrum_anomaly_detection/models/DVP/v1.7/encoder_DVP_v1.7.joblib",
+    "decoder": "/workspace/code/spectrum_anomaly_detection/models/DVP/v1.7/decoder_DVP_v1.7.joblib",
+    "scaler": "/workspace/code/spectrum_anomaly_detection/models/DVP/v1.7/scaler_DVP_v1.7.joblib",
+    "weights": "/workspace/code/spectrum_anomaly_detection/models/DVP/v1.7/weights_DVP_v1.7.npy",
+    "metadata": "/workspace/code/spectrum_anomaly_detection/models/DVP/v1.7/metadata_DVP_v1.7.json"
+  },
+  "next_steps": [
+    "Phase 5: 模型评估和可视化系统",
+    "Phase 6: 决策引擎和API接口",
+    "部署到生产环境"
+  ]
+}

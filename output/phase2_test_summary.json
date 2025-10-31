@@ -16,27 +16,27 @@
       "results": [
         {
           "noise_level": 0.05,
-          "quality_score": 96.9434171003723,
-          "pearson": 0.999666727395544,
-          "rmse": 0.04558112027513837
+          "quality_score": 96.16358398381728,
+          "pearson": 0.9994558932015536,
+          "rmse": 0.05785330854303282
         },
         {
           "noise_level": 0.1,
-          "quality_score": 93.70811926042492,
-          "pearson": 0.9984874271094362,
-          "rmse": 0.09836988353576055
+          "quality_score": 93.70854805407811,
+          "pearson": 0.9984700769266882,
+          "rmse": 0.0983580082802781
         },
         {
           "noise_level": 0.2,
-          "quality_score": 88.90989836458286,
-          "pearson": 0.9942740507074131,
-          "rmse": 0.18652539177708222
+          "quality_score": 88.53497472041765,
+          "pearson": 0.9938431560357207,
+          "rmse": 0.19398245030730704
         },
         {
           "noise_level": 0.5,
-          "quality_score": 78.04896640165558,
-          "pearson": 0.9709420971117027,
-          "rmse": 0.4437504031814296
+          "quality_score": 77.89660259070371,
+          "pearson": 0.9673062652418017,
+          "rmse": 0.44666930252284776
         }
       ]
     },
@@ -61,8 +61,8 @@
     },
     "batch_evaluation": {
       "total_spectra": 10,
-      "average_score": 87.2716566356197,
-      "score_std": 8.442832083324078,
+      "average_score": 87.32784380555094,
+      "score_std": 8.266739276424863,
       "quality_distribution": {
         "excellent": 3,
         "good": 3,

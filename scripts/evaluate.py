@@ -69,7 +69,7 @@ def setup_matplotlib_for_plotting():
 class ModelEvaluator:
     """模型评估器类"""
     
-    def __init__(self, model_dir: str = None, combine_strategy: str = None, random_seed: int = 42, optimize_thresholds: str = "none"):
+    def __init__(self, model_dir: str = None, combine_strategy: str = None, random_seed: int = 42, optimize_thresholds: str = "f1"):
         """
         初始化模型评估器
         
@@ -87,7 +87,7 @@ class ModelEvaluator:
         self.combine_strategy = combine_strategy
         self.random_seed = random_seed
         # 阈值优化策略: none | youden | f1
-        self.optimize_thresholds = (optimize_thresholds or "none").lower()
+        self.optimize_thresholds = (optimize_thresholds or "f1").lower()
         
         # 初始化组件
         self.data_loader = SpectrumDataLoader()
@@ -171,6 +171,17 @@ class ModelEvaluator:
                 print(f"📄 权重文件: {weights_file}")
             if self.metadata:
                 print(f"📋 元数据已加载")
+
+            # 可选：加载已训练的残差分类器
+            residual_clf_path = _find_one([
+                "*residual_clf*DVP*v*.joblib", "*residual_clf*DVP*.joblib", "*residual_clf*.joblib"
+            ])
+            if residual_clf_path and Path(residual_clf_path).exists():
+                try:
+                    self.models['residual_clf'] = joblib.load(residual_clf_path)
+                    print(f"📄 残差分类器: {residual_clf_path}")
+                except Exception:
+                    pass
             
         except Exception as e:
             print(f"❌ 模型加载失败: {e}")
@@ -620,6 +631,63 @@ class ModelEvaluator:
         plt.close()
         
         print(f"✅ Residual analysis saved: {output_path}")
+
+    # --- 新增：残差特征与轻量分类器 ---
+    def _compute_residuals_matrix(self, spectra: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """返回 (residuals_matrix, wavelengths)；residuals_matrix: [N, W]"""
+        wavelengths, _ = self.data_loader.load_dvp_standard_curve()
+        residuals = []
+        for spectrum in spectra:
+            spectrum_scaled = self.models['scaler'].transform(spectrum.reshape(1, -1))
+            encoded = self.models['encoder'].predict(spectrum_scaled)
+            decoded = self.models['decoder'].predict(encoded)
+            spectrum_original = self.models['scaler'].inverse_transform(spectrum_scaled)
+            residual = (spectrum_original - decoded).flatten()
+            residuals.append(residual)
+        return np.array(residuals), wavelengths
+
+    def _extract_segment_features(self, residuals: np.ndarray, wavelengths: np.ndarray) -> np.ndarray:
+        """
+        提取分段残差特征：对若干波段计算 [mean(|r|), rms(r), max(|r|)]
+        段定义：400-480, 480-560, 560-680, 680-780（含边界）
+        返回形状 [N, 12]
+        """
+        bands = [(400, 480), (480, 560), (560, 680), (680, 780)]
+        feats = []
+        for lo, hi in bands:
+            mask = (wavelengths >= lo) & (wavelengths <= hi)
+            seg = residuals[:, mask]
+            abs_seg = np.abs(seg)
+            mean_abs = np.mean(abs_seg, axis=1)
+            rms = np.sqrt(np.mean(seg**2, axis=1))
+            max_abs = np.max(abs_seg, axis=1)
+            feats.append(mean_abs)
+            feats.append(rms)
+            feats.append(max_abs)
+        return np.stack(feats, axis=1).T if False else np.column_stack(feats)
+
+    def _fit_residual_logistic(self, X: np.ndarray, y: np.ndarray) -> Tuple[object, np.ndarray]:
+        from sklearn.linear_model import LogisticRegression
+        from sklearn.model_selection import StratifiedKFold
+        skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.random_seed)
+        oof = np.zeros(len(y))
+        model = LogisticRegression(max_iter=1000)
+        for train_idx, val_idx in skf.split(X, y):
+            model.fit(X[train_idx], y[train_idx])
+            proba = model.predict_proba(X[val_idx])[:, 1]
+            oof[val_idx] = proba
+        # 再在全量上拟合一个最终模型用于部署
+        model.fit(X, y)
+        return model, oof
+
+    def compute_residual_classifier_scores(self, spectra: np.ndarray, stability_labels: np.ndarray) -> Tuple[np.ndarray, object]:
+        """
+        生成基于残差特征的轻量分类器分数（概率，越大越异常）并返回模型。
+        """
+        residuals, wavelengths = self._compute_residuals_matrix(spectra)
+        X = self._extract_segment_features(residuals, wavelengths)
+        clf, oof_scores = self._fit_residual_logistic(X, stability_labels)
+        return oof_scores, clf
     
     def create_confusion_matrix_and_roc(self, quality_scores: np.ndarray, 
                                       stability_scores: np.ndarray,
@@ -866,6 +934,10 @@ class ModelEvaluator:
             quality_scores, stability_scores_dir, quality_labels, stability_labels,
             quality_threshold, stability_threshold, combine_strategy=combine_strategy
         )
+        # 记录阈值优化方法与稳定性翻转探测
+        performance_metrics['stability_score']['flipped'] = bool(flipped)
+        performance_metrics['stability_score']['auc_probe'] = float(auc_probe)
+        performance_metrics['optimize_thresholds'] = self.optimize_thresholds
         # 记录组合策略
         performance_metrics['combined_model'] = {
             **performance_metrics['combined_model'],
@@ -1016,6 +1088,12 @@ class ModelEvaluator:
 - **AUC-ROC**: {metrics['combined_model']['auc_roc']:.4f}
  - **组合策略**: {metrics['combined_model'].get('combine_strategy', 'two_stage')}
 
+### 阈值与方向
+- **优化方法**: {metrics.get('optimize_thresholds', 'f1')}
+- **Quality 阈值**: {metrics['quality_score']['threshold']:.4f}
+- **Stability 阈值**: {metrics['stability_score']['threshold']:.4f}
+- **Stability 方向翻转**: {metrics['stability_score'].get('flipped', False)}（probe AUC={metrics['stability_score'].get('auc_probe', float('nan')):.3f}）
+
 ## 模型分析
 
 ### 优势
@@ -1040,6 +1118,20 @@ class ModelEvaluator:
         5. **Precision-Recall曲线**: `pr_curves.png`
         6. **阈值敏感性(F1 vs 阈值)**: `threshold_sensitivity.png`
         7. **稳定性分数分布(正负样本)**: `stability_score_hist.png`
+
+## 残差特征通道（可选）
+
+当启用`--use-residual-clf`时，本报告还包含基于“分段残差特征+Logistic”的辅助通道与融合结果：
+
+- 残差通道（Stability Residual Classifier）
+  - 融合方式: {metrics.get('residual_classifier', {}).get('fuse_mode', 'N/A')}
+  - 加权权重: {metrics.get('residual_classifier', {}).get('weight', 'N/A')}
+- 残差融合组合（Combined with Residual）
+  - 准确率: {metrics.get('combined_with_residual', {}).get('accuracy', 'N/A')}
+  - 精确率: {metrics.get('combined_with_residual', {}).get('precision', 'N/A')}
+  - 召回率: {metrics.get('combined_with_residual', {}).get('recall', 'N/A')}
+  - F1分数: {metrics.get('combined_with_residual', {}).get('f1_score', 'N/A')}
+  - AUC-ROC: {metrics.get('combined_with_residual', {}).get('auc_roc', 'N/A')}
 
 ## 结论
 
@@ -1092,6 +1184,76 @@ DVP涂层光谱异常检测模型在测试数据集上表现良好，组合模�
             metrics = self.create_confusion_matrix_and_roc(
                 quality_scores, stability_scores, quality_labels, stability_labels
             )
+
+            # 3.1（可选）残差分类器与融合
+            if getattr(self, 'use_residual_clf', False):
+                # 若已加载预训练分类器，则直接使用；否则基于标签拟合一个OOF评分用于分析
+                if 'residual_clf' in self.models:
+                    residuals, wavelengths = self._compute_residuals_matrix(spectra)
+                    X = self._extract_segment_features(residuals, wavelengths)
+                    r_scores = self.models['residual_clf'].predict_proba(X)[:, 1]
+                    clf = self.models['residual_clf']
+                else:
+                    # 计算残差分类器分数（越大越异常）
+                    r_scores, clf = self.compute_residual_classifier_scores(spectra, stability_labels)
+                # 与AE方向一致分数做融合：加权或OR
+                mode = getattr(self, 'residual_fuse_mode', 'weighted')  # 'weighted' | 'or'
+                weight = float(getattr(self, 'residual_weight', 0.5))
+
+                # 注意：create_confusion_matrix_and_roc中已进行了方向统一，这里重算一次方向统一供融合使用
+                from sklearn.metrics import roc_curve, auc
+                fpr_probe, tpr_probe, _ = roc_curve(stability_labels, stability_scores)
+                auc_probe = auc(fpr_probe, tpr_probe)
+                s_dir = (-stability_scores) if auc_probe < 0.55 else stability_scores
+
+                # 归一化到[0,1]
+                eps = 1e-12
+                s_anom = (s_dir - s_dir.min()) / (s_dir.max() - s_dir.min() + eps)
+                r_anom = (r_scores - r_scores.min()) / (r_scores.max() - r_scores.min() + eps)
+
+                if mode == 'or':
+                    fused = np.maximum(s_anom, r_anom)
+                else:
+                    fused = weight * s_anom + (1.0 - weight) * r_anom
+
+                # 计算融合后的组合PR/ROC等（仅指标，不重复绘图）
+                from sklearn.metrics import roc_curve, auc, f1_score, precision_score, recall_score, accuracy_score
+                combined_true = ((quality_labels == 1) | (stability_labels == 1)).astype(int)
+                # 使用同样的质量异常分数（1-Q）
+                q_anom = 1.0 - quality_scores
+                q_anom = (q_anom - q_anom.min()) / (q_anom.max() - q_anom.min() + eps)
+                # 简单平均得到新的组合分数
+                combined_scores_fused = 0.5 * q_anom + 0.5 * fused
+                fpr_fused, tpr_fused, th_fused = roc_curve(combined_true, combined_scores_fused)
+                auc_fused = auc(fpr_fused, tpr_fused)
+
+                # 以F1最优阈值取工作点
+                th_grid = np.linspace(combined_scores_fused.min(), combined_scores_fused.max(), 200)
+                best_f1, best_th = -1.0, th_grid[0]
+                for th in th_grid:
+                    pred = (combined_scores_fused > th).astype(int)
+                    f1 = f1_score(combined_true, pred, zero_division=0)
+                    if f1 > best_f1:
+                        best_f1, best_th = f1, th
+                pred = (combined_scores_fused > best_th).astype(int)
+                acc = accuracy_score(combined_true, pred)
+                prec = precision_score(combined_true, pred, zero_division=0)
+                rec = recall_score(combined_true, pred, zero_division=0)
+
+                # 写入metrics补充字段
+                metrics['residual_classifier'] = {
+                    'fuse_mode': mode,
+                    'weight': weight,
+                    'auc_roc_stability_residual': float(auc((roc_curve(stability_labels, r_anom)[0]), (roc_curve(stability_labels, r_anom)[1]))),
+                }
+                metrics['combined_with_residual'] = {
+                    'accuracy': float(acc),
+                    'precision': float(prec),
+                    'recall': float(rec),
+                    'f1_score': float(best_f1),
+                    'auc_roc': float(auc_fused),
+                    'threshold': float(best_th),
+                }
             
             # 4. 生成评估报告
             self.generate_evaluation_report(metrics, n_samples)
@@ -1122,9 +1284,15 @@ def main():
                        help='模型文件目录')
     parser.add_argument('--combine-strategy', type=str, choices=['two_stage', 'and', 'or'],
                        default=None, help='组合策略覆盖(two_stage|and|or)')
+    parser.add_argument('--use-residual-clf', action='store_true',
+                       help='启用残差分段特征+Logistic 辅助通道')
+    parser.add_argument('--residual-fuse-mode', type=str, choices=['weighted', 'or'], default='weighted',
+                       help='残差通道与AE误差的融合方式：加权或逻辑OR')
+    parser.add_argument('--residual-weight', type=float, default=0.5,
+                       help='融合权重（weighted模式下，越大越偏向AE误差）')
     parser.add_argument('--random-seed', type=int, default=42,
                        help='随机种子，用于生成可复现的测试数据（默认: 42）')
-    parser.add_argument('--optimize-thresholds', type=str, choices=['none', 'youden', 'f1'], default='none',
+    parser.add_argument('--optimize-thresholds', type=str, choices=['none', 'youden', 'f1'], default='f1',
                        help='阈值优化方法：none/youden/f1（默认: none）')
     
     args = parser.parse_args()
@@ -1132,6 +1300,10 @@ def main():
     # 创建评估器并运行评估
     evaluator = ModelEvaluator(model_dir=args.model_dir, combine_strategy=args.combine_strategy,
                                random_seed=args.random_seed, optimize_thresholds=args.optimize_thresholds)
+    if args.use_residual_clf:
+        setattr(evaluator, 'use_residual_clf', True)
+        setattr(evaluator, 'residual_fuse_mode', args.residual_fuse_mode)
+        setattr(evaluator, 'residual_weight', args.residual_weight)
     evaluator.run_complete_evaluation(n_samples=args.samples)
 
 

@@ -1,0 +1,29 @@
+{
+  "quality_score": {
+    "accuracy": 0.973,
+    "precision": 0.8322981366459627,
+    "recall": 1.0,
+    "f1_score": 0.9084745762711864,
+    "auc_roc": 0.9866860845886043,
+    "threshold": 0.9716567741378903
+  },
+  "stability_score": {
+    "accuracy": 0.877,
+    "precision": 0.5697674418604651,
+    "recall": 0.362962962962963,
+    "f1_score": 0.4434389140271493,
+    "auc_roc": 0.45322200813530295,
+    "threshold": -7.267626082442605,
+    "flipped": true,
+    "auc_probe": 0.546777991864697
+  },
+  "combined_model": {
+    "accuracy": 0.967,
+    "precision": 0.9513513513513514,
+    "recall": 0.88,
+    "f1_score": 0.9142857142857143,
+    "auc_roc": 0.94710625,
+    "combine_strategy": "two_stage"
+  },
+  "optimize_thresholds": "f1"
+}

@@ -13,8 +13,8 @@
     81
   ],
   "latent_dim": 4,
-  "threshold": 2.588771217303563,
-  "training_date": "2025-10-30T19:05:52.911822",
+  "threshold": 2.588771217303564,
+  "training_date": "2025-10-31T00:15:22.920698",
   "training_samples": 80,
   "validation_samples": 20,
   "weights_used": [

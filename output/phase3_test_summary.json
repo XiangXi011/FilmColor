@@ -21,42 +21,42 @@
     "train_error_mean": 0.8797614969763543,
     "train_error_std": 0.5800808767233179,
     "val_error_mean": 0.9489600087321992,
-    "val_error_std": 0.6658775746716942,
-    "threshold_99_5": 2.588771217303563
+    "val_error_std": 0.6658775746716943,
+    "threshold_99_5": 2.588771217303564
   },
   "test_results": [
     {
       "noise_level": 0.05,
-      "reconstruction_error": 0.2362576924913516,
-      "threshold": 2.588771217303563,
+      "reconstruction_error": 0.2362576924913515,
+      "threshold": 2.588771217303564,
       "is_anomaly": false,
       "quality_score": 100.0
     },
     {
       "noise_level": 0.1,
-      "reconstruction_error": 0.9308070109001532,
-      "threshold": 2.588771217303563,
+      "reconstruction_error": 0.9308070109001534,
+      "threshold": 2.588771217303564,
       "is_anomaly": false,
       "quality_score": 100.0
     },
     {
       "noise_level": 0.2,
-      "reconstruction_error": 3.6450726243105422,
-      "threshold": 2.588771217303563,
+      "reconstruction_error": 3.645072624310543,
+      "threshold": 2.588771217303564,
       "is_anomaly": true,
       "quality_score": 0.0
     },
     {
       "noise_level": 0.5,
       "reconstruction_error": 19.667336853119917,
-      "threshold": 2.588771217303563,
+      "threshold": 2.588771217303564,
       "is_anomaly": true,
       "quality_score": 0.0
     },
     {
       "noise_level": 1.0,
       "reconstruction_error": 94.15938815822808,
-      "threshold": 2.588771217303563,
+      "threshold": 2.588771217303564,
       "is_anomaly": true,
       "quality_score": 0.0
     }
