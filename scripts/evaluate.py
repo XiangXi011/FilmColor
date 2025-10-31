@@ -330,7 +330,7 @@ class ModelEvaluator:
         print("📊 创建Quality Score vs Stability Score散点图...")
         
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-        fig.suptitle('DVP涂层光谱异常检测评估结果', fontsize=16, fontweight='bold')
+        fig.suptitle('DVP Coating Spectral Anomaly Evaluation', fontsize=16, fontweight='bold')
         
         # 1. 整体散点图
         colors = []
@@ -347,15 +347,15 @@ class ModelEvaluator:
         scatter = ax1.scatter(quality_scores, stability_scores, c=colors, alpha=0.6, s=30)
         ax1.set_xlabel('Quality Score')
         ax1.set_ylabel('Stability Score')
-        ax1.set_title('Quality Score vs Stability Score (整体)')
+        ax1.set_title('Quality Score vs Stability Score (Overall)')
         ax1.grid(True, alpha=0.3)
         
         # 添加图例
         legend_elements = [
-            mpatches.Patch(color='green', label='正常 (Normal)'),
-            mpatches.Patch(color='orange', label='质量异常 (Quality)'),
-            mpatches.Patch(color='blue', label='稳定性异常 (Stability)'),
-            mpatches.Patch(color='red', label='双重异常 (Both)')
+            mpatches.Patch(color='green', label='Normal'),
+            mpatches.Patch(color='orange', label='Quality Anomaly'),
+            mpatches.Patch(color='blue', label='Stability Anomaly'),
+            mpatches.Patch(color='red', label='Both')
         ]
         ax1.legend(handles=legend_elements, loc='upper right')
         
@@ -365,8 +365,8 @@ class ModelEvaluator:
         ax2.hist(quality_scores[quality_labels == 1], bins=30, alpha=0.7, 
                 label='质量异常', color='red', density=True)
         ax2.set_xlabel('Quality Score')
-        ax2.set_ylabel('密度')
-        ax2.set_title('Quality Score分布')
+        ax2.set_ylabel('Density')
+        ax2.set_title('Quality Score Distribution')
         ax2.legend()
         ax2.grid(True, alpha=0.3)
         
@@ -376,8 +376,8 @@ class ModelEvaluator:
         ax3.hist(stability_scores[stability_labels == 1], bins=30, alpha=0.7, 
                 label='稳定性异常', color='red', density=True)
         ax3.set_xlabel('Stability Score')
-        ax3.set_ylabel('密度')
-        ax3.set_title('Stability Score分布')
+        ax3.set_ylabel('Density')
+        ax3.set_title('Stability Score Distribution')
         ax3.legend()
         ax3.grid(True, alpha=0.3)
         
@@ -439,13 +439,13 @@ class ModelEvaluator:
         anomaly_mask = (quality_labels == 1) | (stability_labels == 1)
         
         ax4.scatter(quality_scores[normal_mask], stability_scores[normal_mask], 
-                   c='green', s=20, alpha=0.7, label='正常')
+                   c='green', s=20, alpha=0.7, label='Normal')
         ax4.scatter(quality_scores[anomaly_mask], stability_scores[anomaly_mask], 
-                   c='red', s=20, alpha=0.7, label='异常')
+                   c='red', s=20, alpha=0.7, label='Anomaly')
         
         ax4.set_xlabel('Quality Score')
         ax4.set_ylabel('Stability Score')
-        ax4.set_title('决策区域')
+        ax4.set_title('Decision Region')
         ax4.legend()
         ax4.grid(True, alpha=0.3)
         
@@ -456,7 +456,7 @@ class ModelEvaluator:
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
         
-        print(f"✅ 散点图已保存: {output_path}")
+        print(f"✅ Scatter figure saved: {output_path}")
     
     def create_spectral_reconstruction_comparison(self, spectra: np.ndarray, 
                                                 sample_indices: List[int] = None):
@@ -484,7 +484,7 @@ class ModelEvaluator:
         if n_rows == 1:
             axes = axes.reshape(1, -1)
         
-        fig.suptitle('光谱重构对比分析', fontsize=16, fontweight='bold')
+        fig.suptitle('Spectral Reconstruction Comparison', fontsize=16, fontweight='bold')
         
         for i, idx in enumerate(sample_indices):
             row = i // n_cols
@@ -501,23 +501,23 @@ class ModelEvaluator:
             reconstructed = self.models['scaler'].inverse_transform(decoded)[0]
             
             # 绘制对比
-            ax.plot(wavelengths, original, 'b-', label='原始光谱', linewidth=2)
-            ax.plot(wavelengths, reconstructed, 'r--', label='重构光谱', linewidth=2)
+            ax.plot(wavelengths, original, 'b-', label='Original Spectrum', linewidth=2)
+            ax.plot(wavelengths, reconstructed, 'r--', label='Reconstructed Spectrum', linewidth=2)
             
             # 计算误差
             reconstruction_error = np.mean(
                 self.models['weights'] * (original - reconstructed) ** 2
             )
             
-            ax.set_xlabel('波长 (nm)')
-            ax.set_ylabel('光谱强度')
-            ax.set_title(f'样本 {idx}\n重构误差: {reconstruction_error:.4f}')
+            ax.set_xlabel('Wavelength (nm)')
+            ax.set_ylabel('Intensity')
+            ax.set_title(f'Sample {idx}\nReconstruction Error: {reconstruction_error:.4f}')
             ax.legend()
             ax.grid(True, alpha=0.3)
             
             # 填充误差区域
             ax.fill_between(wavelengths, original, reconstructed, alpha=0.3, color='gray', 
-                          label='重构误差')
+                          label='Reconstruction Error')
         
         # 隐藏多余的子图
         for i in range(n_samples, n_rows * n_cols):
@@ -532,7 +532,7 @@ class ModelEvaluator:
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
         
-        print(f"✅ 光谱重构对比图已保存: {output_path}")
+        print(f"✅ Reconstruction comparison saved: {output_path}")
     
     def create_residual_analysis(self, spectra: np.ndarray):
         """
@@ -570,15 +570,15 @@ class ModelEvaluator:
         
         # 创建残差分析图
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-        fig.suptitle('重构残差分析', fontsize=16, fontweight='bold')
+        fig.suptitle('Reconstruction Residual Analysis', fontsize=16, fontweight='bold')
         
         # 1. 重构误差分布
         ax1.hist(reconstruction_errors, bins=50, alpha=0.7, color='skyblue', edgecolor='black')
         ax1.axvline(np.percentile(reconstruction_errors, 99.5), color='red', linestyle='--', 
-                   label=f'99.5%分位数: {np.percentile(reconstruction_errors, 99.5):.4f}')
-        ax1.set_xlabel('重构误差')
-        ax1.set_ylabel('频次')
-        ax1.set_title('重构误差分布')
+                   label=f'99.5th Percentile: {np.percentile(reconstruction_errors, 99.5):.4f}')
+        ax1.set_xlabel('Reconstruction Error')
+        ax1.set_ylabel('Frequency')
+        ax1.set_title('Reconstruction Error Distribution')
         ax1.legend()
         ax1.grid(True, alpha=0.3)
         
@@ -593,23 +593,23 @@ class ModelEvaluator:
                         mean_residual - std_residual, 
                         mean_residual + std_residual, 
                         alpha=0.3, color='blue', label='±1标准差')
-        ax2.set_xlabel('波长 (nm)')
-        ax2.set_ylabel('残差')
-        ax2.set_title('残差随波长变化')
+        ax2.set_xlabel('Wavelength (nm)')
+        ax2.set_ylabel('Residual')
+        ax2.set_title('Residual vs Wavelength')
         ax2.legend()
         ax2.grid(True, alpha=0.3)
         
         # 3. 残差Q-Q图
         from scipy import stats
         stats.probplot(reconstruction_errors, dist="norm", plot=ax3)
-        ax3.set_title('重构误差Q-Q图')
+        ax3.set_title('Reconstruction Error Q-Q Plot')
         ax3.grid(True, alpha=0.3)
         
         # 4. 残差vs重构值
         ax4.scatter(reconstruction_errors, reconstruction_errors, alpha=0.6, s=20)
-        ax4.set_xlabel('重构误差')
-        ax4.set_ylabel('重构误差')
-        ax4.set_title('重构误差vs重构误差')
+        ax4.set_xlabel('Reconstruction Error')
+        ax4.set_ylabel('Reconstruction Error')
+        ax4.set_title('Reconstruction Error vs Reconstruction Error')
         ax4.grid(True, alpha=0.3)
         
         plt.tight_layout()
@@ -619,7 +619,7 @@ class ModelEvaluator:
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
         
-        print(f"✅ 残差分析图已保存: {output_path}")
+        print(f"✅ Residual analysis saved: {output_path}")
     
     def create_confusion_matrix_and_roc(self, quality_scores: np.ndarray, 
                                       stability_scores: np.ndarray,
@@ -729,28 +729,28 @@ class ModelEvaluator:
         combined_true = ((quality_labels == 1) | (stability_labels == 1)).astype(int)
         
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-        fig.suptitle('模型性能评估', fontsize=16, fontweight='bold')
+        fig.suptitle('Model Performance Evaluation', fontsize=16, fontweight='bold')
         
         # 1. Quality Score混淆矩阵
         cm_quality = confusion_matrix(quality_labels, quality_pred)
         sns.heatmap(cm_quality, annot=True, fmt='d', cmap='Blues', ax=ax1)
-        ax1.set_title('Quality Score混淆矩阵')
-        ax1.set_xlabel('预测标签')
-        ax1.set_ylabel('真实标签')
+        ax1.set_title('Quality Score Confusion Matrix')
+        ax1.set_xlabel('Predicted Label')
+        ax1.set_ylabel('True Label')
         
         # 2. Stability Score混淆矩阵
         cm_stability = confusion_matrix(stability_labels, stability_pred)
         sns.heatmap(cm_stability, annot=True, fmt='d', cmap='Greens', ax=ax2)
-        ax2.set_title('Stability Score混淆矩阵')
-        ax2.set_xlabel('预测标签')
-        ax2.set_ylabel('真实标签')
+        ax2.set_title('Stability Score Confusion Matrix')
+        ax2.set_xlabel('Predicted Label')
+        ax2.set_ylabel('True Label')
         
         # 3. 组合模型混淆矩阵
         cm_combined = confusion_matrix(combined_true, combined_pred)
         sns.heatmap(cm_combined, annot=True, fmt='d', cmap='Oranges', ax=ax3)
-        ax3.set_title('组合模型混淆矩阵')
-        ax3.set_xlabel('预测标签')
-        ax3.set_ylabel('真实标签')
+        ax3.set_title('Combined Model Confusion Matrix')
+        ax3.set_xlabel('Predicted Label')
+        ax3.set_ylabel('True Label')
         
         # 4. ROC曲线
         # Quality Score ROC
@@ -786,9 +786,9 @@ class ModelEvaluator:
         ax4.plot(fpr_combined, tpr_combined, 'r-', 
                 label=f'Combined (AUC = {roc_auc_combined:.3f})')
         ax4.plot([0, 1], [0, 1], 'k--', label='Random')
-        ax4.set_xlabel('假阳性率')
-        ax4.set_ylabel('真阳性率')
-        ax4.set_title('ROC曲线')
+        ax4.set_xlabel('False Positive Rate')
+        ax4.set_ylabel('True Positive Rate')
+        ax4.set_title('ROC Curve')
         ax4.legend()
         ax4.grid(True, alpha=0.3)
         
@@ -815,7 +815,7 @@ class ModelEvaluator:
         plt.plot(rc, pc, label=f'Combined AP={ap_c:.3f}')
         plt.xlabel('Recall')
         plt.ylabel('Precision')
-        plt.title('Precision-Recall 曲线')
+        plt.title('Precision-Recall Curves')
         plt.legend()
         plt.grid(True, alpha=0.3)
         pr_path = self.output_dir / 'pr_curves.png'
@@ -840,7 +840,7 @@ class ModelEvaluator:
         plt.plot(th_s, f1_s, label='Stability F1')
         plt.xlabel('Threshold')
         plt.ylabel('F1')
-        plt.title('阈值敏感性（F1 vs 阈值）')
+        plt.title('Threshold Sensitivity (F1 vs Threshold)')
         plt.legend()
         plt.grid(True, alpha=0.3)
         th_path = self.output_dir / 'threshold_sensitivity.png'
@@ -849,11 +849,11 @@ class ModelEvaluator:
 
         # 稳定性分数直方图（正负样本）
         plt.figure(figsize=(8,6))
-        plt.hist(stability_scores_dir[stability_labels==0], bins=40, alpha=0.6, label='正常')
-        plt.hist(stability_scores_dir[stability_labels==1], bins=40, alpha=0.6, label='异常')
-        plt.xlabel('Stability 异常分数(方向已统一)')
-        plt.ylabel('频次')
-        plt.title('Stability Score 分布（正负样本）')
+        plt.hist(stability_scores_dir[stability_labels==0], bins=40, alpha=0.6, label='Normal')
+        plt.hist(stability_scores_dir[stability_labels==1], bins=40, alpha=0.6, label='Anomaly')
+        plt.xlabel('Stability Anomaly Score (direction unified)')
+        plt.ylabel('Frequency')
+        plt.title('Stability Score Distribution (Positive vs Negative)')
         plt.legend()
         plt.grid(True, alpha=0.3)
         hist_path = self.output_dir / 'stability_score_hist.png'
@@ -872,7 +872,7 @@ class ModelEvaluator:
             'combine_strategy': combine_strategy
         }
         
-        print(f"✅ 混淆矩阵和ROC曲线已保存: {output_path}")
+        print(f"✅ Confusion matrices and ROC saved: {output_path}")
         return performance_metrics
     
     def _calculate_performance_metrics(self, quality_scores: np.ndarray, 
