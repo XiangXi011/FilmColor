@@ -1,0 +1,48 @@
+{
+  "n_total": 4566,
+  "n_false_positive": 218,
+  "false_positive_rate": 0.04774419623302672,
+  "quality_score": {
+    "mean": 0.7749728491059551,
+    "std": 0.008951003559509675,
+    "percentiles": {
+      "25": 0.7671393167714128,
+      "50": 0.7738791693314226,
+      "75": 0.7809438268097587
+    }
+  },
+  "quality_threshold": 0.7622887361803471,
+  "quality_decision_threshold": 0.8,
+  "quality_bands": {
+    "below_quality_threshold": {
+      "count": 0,
+      "ratio": 0.0
+    },
+    "edge_band": {
+      "range": [
+        0.7622887361803471,
+        0.8
+      ],
+      "count": 200,
+      "ratio": 1.0
+    },
+    "above_decision_threshold": {
+      "count": 0,
+      "ratio": 0.0
+    }
+  },
+  "stability_score": {
+    "mean": 27.47425306399631,
+    "std": 3.7730224894115882,
+    "percentiles": {
+      "25": 24.701062712652273,
+      "50": 26.612275344057213,
+      "75": 29.01351440554008
+    }
+  },
+  "stability_threshold": 23.36608443434134,
+  "spectrum": {
+    "max_diff_wavelength": 380.0,
+    "max_diff_value": -2.70065000000001
+  }
+}

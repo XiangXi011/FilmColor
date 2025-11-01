@@ -1,0 +1,116 @@
+{
+  "coating_name": "DVP",
+  "version": "v1.12_varsm_21k",
+  "training_date": "2025-11-01T09:56:16.012519",
+  "config": {
+    "training_samples": 200,
+    "validation_split": 0.2,
+    "noise_levels": [
+      0.05,
+      0.1,
+      0.15,
+      0.2
+    ],
+    "quality_threshold": 92.0,
+    "stability_threshold_percentile": 99.9,
+    "stability_threshold_method": "percentile",
+    "stability_mad_k": 3.5,
+    "weights_base_range": [
+      400.0,
+      680.0
+    ],
+    "weights_base_value": 3.0,
+    "weights_peak_range": [
+      400.0,
+      560.0
+    ],
+    "weights_peak_multiplier": 1.5,
+    "weights_mode": "variance_smooth",
+    "weights_mix_alpha": 0.7,
+    "weights_smooth_pctl_lo": 5.0,
+    "weights_smooth_pctl_hi": 95.0,
+    "weights_smooth_window": 5,
+    "random_seed": 42,
+    "ae_encoder_layers": [
+      64,
+      32,
+      16,
+      8
+    ],
+    "ae_decoder_layers": [
+      16,
+      32,
+      64,
+      81
+    ],
+    "ae_alpha": 0.0002,
+    "ae_early_stopping": true,
+    "ae_n_iter_no_change": 12,
+    "ae_validation_fraction": 0.1
+  },
+  "similarity_evaluator": {
+    "quality_threshold": 92.0,
+    "normal_scores_stats": {
+      "mean": 97.79764644655519,
+      "std": 6.022153711744772,
+      "min": 74.53930694951751,
+      "max": 100.0,
+      "percentile_5": 81.14173183425729,
+      "percentile_95": 100.0
+    }
+  },
+  "weighted_autoencoder": {
+    "stability_threshold": 5.405782225241333,
+    "threshold_method": "percentile",
+    "threshold_percentile": 99.9,
+    "error_stats": {
+      "train_mean": 0.1469087309667647,
+      "train_std": 0.5314343940057905,
+      "val_mean": 0.1674784678598685,
+      "val_std": 0.5872911139252559
+    },
+    "weights_mode": "variance_smooth",
+    "weights_params": {
+      "mix_alpha": 0.7,
+      "smooth_pctl_lo": 5.0,
+      "smooth_pctl_hi": 95.0,
+      "smooth_window": 5,
+      "base_range": [
+        400.0,
+        680.0
+      ],
+      "base_value": 3.0,
+      "peak_range": [
+        400.0,
+        560.0
+      ],
+      "peak_multiplier": 1.5
+    }
+  },
+  "combine_strategy": "weighted",
+  "residual_fusion": {
+    "fuse_mode": "weighted",
+    "weights": {
+      "quality": 0.4,
+      "stability": 0.1,
+      "residual": 0.5
+    },
+    "threshold": 0.48008015157809936,
+    "source": "evaluation/label/labeled_dataset_metrics.json",
+    "updated_at": "2025-11-01T13:45:00"
+  },
+  "model_architecture": {
+    "input_dim": 81,
+    "encoder_dims": [
+      48,
+      16,
+      4
+    ],
+    "decoder_dims": [
+      16,
+      48,
+      81
+    ],
+    "latent_dim": 4
+  }
+}

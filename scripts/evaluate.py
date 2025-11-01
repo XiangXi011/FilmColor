@@ -19,9 +19,28 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import seaborn as sns
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    import seaborn as sns
+    HAS_PLOTTING_LIBS = True
+except ModuleNotFoundError:
+    HAS_PLOTTING_LIBS = False
+
+    class _DummyPlotModule:
+        def __getattr__(self, name):
+            def _noop(*args, **kwargs):
+                return None
+
+            return _noop
+
+    class _DummyPatches:
+        def Patch(self, *args, **kwargs):
+            return None
+
+    plt = _DummyPlotModule()
+    sns = _DummyPlotModule()
+    mpatches = _DummyPatches()
 from sklearn.metrics import (confusion_matrix, roc_curve, auc, classification_report,
                            accuracy_score, precision_score, recall_score, f1_score,
                            precision_recall_curve, average_precision_score)
@@ -42,6 +61,9 @@ def setup_matplotlib_for_plotting():
     Setup matplotlib and seaborn for plotting with proper configuration.
     Call this function before creating any plots to ensure proper rendering.
     """
+    if not HAS_PLOTTING_LIBS:
+        warnings.warn("matplotlib/seaborn 未安装，跳过可视化生成，仅输出数值指标。", RuntimeWarning)
+        return
     import platform
     
     warnings.filterwarnings('default')  # Show all warnings
@@ -97,13 +119,31 @@ class ModelEvaluator:
         self.models = {}
         self.metadata = {}
         self._load_models()
+
+        # 残差融合配置（若metadata提供则作为默认值）
+        self.residual_fusion_config = self.metadata.get('residual_fusion') if isinstance(self.metadata, dict) else None
+        if self.residual_fusion_config:
+            weights_cfg = self.residual_fusion_config.get('weights', {})
+            if not hasattr(self, 'use_residual_clf'):
+                setattr(self, 'use_residual_clf', True)
+            if not hasattr(self, 'residual_fuse_mode'):
+                setattr(self, 'residual_fuse_mode', self.residual_fusion_config.get('fuse_mode', 'weighted'))
+            if not hasattr(self, 'residual_weight') and isinstance(weights_cfg, dict):
+                # 兼容旧逻辑：将残差权重作为residual_weight
+                residual_w = float(weights_cfg.get('residual', 0.5))
+                setattr(self, 'residual_weight', residual_w)
+            self.residual_threshold_config = self.residual_fusion_config.get('threshold')
+            self.residual_weights_config = weights_cfg if isinstance(weights_cfg, dict) else None
+        else:
+            self.residual_threshold_config = None
+            self.residual_weights_config = None
         
         # 设置matplotlib
         setup_matplotlib_for_plotting()
         
-        print(f"✅ 模型评估器初始化完成")
-        print(f"📁 模型目录: {self.model_dir}")
-        print(f"📊 输出目录: {self.output_dir}")
+        print("[OK] 模型评估器初始化完成")
+        print(f"[DIR] 模型目录: {self.model_dir}")
+        print(f"[INFO] 输出目录: {self.output_dir}")
     
     def _load_models(self):
         """加载训练好的模型文件"""
@@ -149,7 +189,7 @@ class ModelEvaluator:
                 peak_mask = (wavelengths >= 400) & (wavelengths <= 550)
                 weights[peak_mask] *= 1.5
                 self.models['weights'] = weights
-                print("⚠️  使用默认DVP权重向量")
+                print("[WARN] 使用默认DVP权重向量")
             
             # 加载元数据（兼容不同命名）
             metadata_path = _find_one([
@@ -161,16 +201,16 @@ class ModelEvaluator:
             else:
                 # 元数据缺失也允许继续，但后续会采用统计回退策略
                 self.metadata = {}
-                print("⚠️  未找到元数据文件，将使用统计回退方式估计阈值")
+                print("[WARN] 未找到元数据文件，将使用统计回退方式估计阈值")
             
-            print("✅ 模型文件加载成功")
-            print(f"📄 编码器: {encoder_path}")
-            print(f"📄 解码器: {decoder_path}")
-            print(f"📄 标准化器: {scaler_path}")
+            print("[OK] 模型文件加载成功")
+            print(f"[FILE] 编码器: {encoder_path}")
+            print(f"[FILE] 解码器: {decoder_path}")
+            print(f"[FILE] 标准化器: {scaler_path}")
             if weights_file:
-                print(f"📄 权重文件: {weights_file}")
+                print(f"[FILE] 权重文件: {weights_file}")
             if self.metadata:
-                print(f"📋 元数据已加载")
+                print("[INFO] 元数据已加载")
 
             # 可选：加载已训练的残差分类器
             residual_clf_path = _find_one([
@@ -179,17 +219,19 @@ class ModelEvaluator:
             if residual_clf_path and Path(residual_clf_path).exists():
                 try:
                     self.models['residual_clf'] = joblib.load(residual_clf_path)
-                    print(f"📄 残差分类器: {residual_clf_path}")
+                    print(f"[FILE] 残差分类器: {residual_clf_path}")
                 except Exception:
                     pass
             
         except Exception as e:
-            print(f"❌ 模型加载失败: {e}")
+            print(f"[ERROR] 模型加载失败: {e}")
             raise
     
     def generate_test_data(self, n_samples: int = 1000) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         生成测试数据用于评估
+        
+        如果提供了test_data_npz，则使用真实测试数据；否则生成合成数据。
         
         Args:
             n_samples: 生成样本数量
@@ -200,8 +242,86 @@ class ModelEvaluator:
             - quality_labels: 质量标签 (0: 正常, 1: 异常)
             - stability_labels: 稳定性标签 (0: 正常, 1: 异常)
         """
-        print(f"🔄 生成 {n_samples} 个测试样本...")
-        print(f"🎲 使用随机种子: {self.random_seed} (确保数据可复现)")
+        # 检查是否使用真实测试数据（混合模式：真实正常样本 + 合成异常样本）
+        if hasattr(self, 'test_data_npz') and self.test_data_npz:
+            try:
+                print(f"[LOAD] 加载真实测试数据: {self.test_data_npz}")
+                data = np.load(self.test_data_npz)
+                real_spectra = data['dvp_values']
+                wavelengths = data['wavelengths']
+                
+                # 计算需要的正常样本数（80%）
+                n_normal = int(n_samples * 0.8)
+                
+                # 从真实数据中随机采样正常样本
+                if len(real_spectra) >= n_normal:
+                    np.random.seed(self.random_seed)
+                    indices = np.random.choice(len(real_spectra), n_normal, replace=False)
+                    normal_spectra = real_spectra[indices]
+                else:
+                    normal_spectra = real_spectra
+                print(f"[WARN] 真实数据不足{n_normal}个，使用全部{len(real_spectra)}个")
+                
+                print(f"[OK] 加载 {len(normal_spectra)} 个真实正常样本")
+                
+                # 生成合成异常样本（20%）
+                print(f"[INFO] 生成 {n_samples - len(normal_spectra)} 个合成异常样本...")
+                np.random.seed(self.random_seed + 1)  # 不同种子避免重复
+                
+                # 加载标准曲线用于生成异常
+                standard_spectrum = np.median(real_spectra, axis=0)  # 用真实数据的中位数作为标准
+                
+                n_anomaly = n_samples - len(normal_spectra)
+                anomaly_spectra = []
+                quality_anomaly_labels = []
+                stability_anomaly_labels = []
+                
+                for i in range(n_anomaly):
+                    anomaly_type = np.random.choice(['quality', 'stability', 'both'])
+                    
+                    if anomaly_type == 'quality':
+                        # 质量异常：光谱形状异常
+                        spectrum = standard_spectrum.copy()
+                        peak_mask = (wavelengths >= 400) & (wavelengths <= 550)
+                        spectrum[peak_mask] += np.random.normal(0, 0.5, np.sum(peak_mask))
+                        quality_anomaly_labels.append(1)
+                        stability_anomaly_labels.append(0)
+                    elif anomaly_type == 'stability':
+                        # 稳定性异常：整体偏移或噪声
+                        spectrum = standard_spectrum.copy()
+                        spectrum += np.random.normal(0, 0.2, len(spectrum))
+                        quality_anomaly_labels.append(0)
+                        stability_anomaly_labels.append(1)
+                    else:  # both
+                        spectrum = standard_spectrum.copy()
+                        peak_mask = (wavelengths >= 400) & (wavelengths <= 550)
+                        spectrum[peak_mask] += np.random.normal(0, 0.5, np.sum(peak_mask))
+                        spectrum += np.random.normal(0, 0.2, len(spectrum))
+                        quality_anomaly_labels.append(1)
+                        stability_anomaly_labels.append(1)
+                    
+                    anomaly_spectra.append(spectrum)
+                
+                # 合并数据
+                all_spectra = np.vstack([normal_spectra, np.array(anomaly_spectra)])
+                quality_labels = np.concatenate([
+                    np.zeros(len(normal_spectra), dtype=int),
+                    np.array(quality_anomaly_labels, dtype=int)
+                ])
+                stability_labels = np.concatenate([
+                    np.zeros(len(normal_spectra), dtype=int),
+                    np.array(stability_anomaly_labels, dtype=int)
+                ])
+                
+                print(f"[OK] 混合测试集: {len(normal_spectra)}个真实正常样本 + {n_anomaly}个合成异常样本")
+                return all_spectra, quality_labels, stability_labels
+                
+            except Exception as e:
+                print(f"[WARN] 无法加载真实测试数据: {e}")
+                print("[WARN] 回退到合成测试数据")
+        
+        print(f"[INFO] 生成 {n_samples} 个合成测试样本...")
+        print(f"[INFO] 使用随机种子: {self.random_seed} (确保数据可复现)")
         
         # 设置随机种子以确保可复现性
         np.random.seed(self.random_seed)
@@ -266,7 +386,7 @@ class ModelEvaluator:
         quality_labels = np.array([0] * n_normal + quality_anomaly_labels)
         stability_labels = np.array([0] * n_normal + stability_anomaly_labels)
         
-        print(f"✅ 测试数据生成完成:")
+        print("[OK] 测试数据生成完成:")
         print(f"   - 正常样本: {n_normal}")
         print(f"   - 质量异常: {sum(quality_anomaly_labels)}")
         print(f"   - 稳定性异常: {sum(stability_anomaly_labels)}")
@@ -283,7 +403,7 @@ class ModelEvaluator:
         Returns:
             Tuple[quality_scores, stability_scores]
         """
-        print("🔄 计算Quality Score和Stability Score...")
+        print("[INFO] 计算Quality Score和Stability Score...")
         
         # 加载标准曲线
         wavelengths, standard_spectrum = self.data_loader.load_dvp_standard_curve()
@@ -319,7 +439,7 @@ class ModelEvaluator:
         
         stability_scores = np.array(stability_scores)
         
-        print(f"✅ Score计算完成:")
+        print("[OK] Score计算完成:")
         print(f"   - Quality Score范围: [{quality_scores.min():.3f}, {quality_scores.max():.3f}]")
         print(f"   - Stability Score范围: [{stability_scores.min():.3f}, {stability_scores.max():.3f}]")
         
@@ -338,8 +458,11 @@ class ModelEvaluator:
             quality_labels: Quality标签
             stability_labels: Stability标签
         """
-        print("📊 创建Quality Score vs Stability Score散点图...")
-        
+        print("[INFO] 创建Quality Score vs Stability Score散点图...")
+        if not HAS_PLOTTING_LIBS:
+            print("[WARN] 绘图库缺失，跳过散点图生成")
+            return
+
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
         fig.suptitle('DVP Coating Spectral Anomaly Evaluation', fontsize=16, fontweight='bold')
         
@@ -467,7 +590,7 @@ class ModelEvaluator:
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
         
-        print(f"✅ Scatter figure saved: {output_path}")
+        print(f"[OK] Scatter figure saved: {output_path}")
     
     def create_spectral_reconstruction_comparison(self, spectra: np.ndarray, 
                                                 sample_indices: List[int] = None):
@@ -478,7 +601,10 @@ class ModelEvaluator:
             spectra: 光谱数据
             sample_indices: 要展示的样本索引列表
         """
-        print("🔄 创建光谱重构对比可视化...")
+        print("[INFO] 创建光谱重构对比可视化...")
+        if not HAS_PLOTTING_LIBS:
+            print("[WARN] 绘图库缺失，跳过光谱重构对比图生成")
+            return
         
         if sample_indices is None:
             # 随机选择一些样本进行展示
@@ -543,7 +669,7 @@ class ModelEvaluator:
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
         
-        print(f"✅ Reconstruction comparison saved: {output_path}")
+        print(f"[OK] Reconstruction comparison saved: {output_path}")
     
     def create_residual_analysis(self, spectra: np.ndarray):
         """
@@ -552,7 +678,10 @@ class ModelEvaluator:
         Args:
             spectra: 光谱数据
         """
-        print("🔄 创建残差分析图表...")
+        print("[INFO] 创建残差分析图表...")
+        if not HAS_PLOTTING_LIBS:
+            print("[WARN] 绘图库缺失，跳过残差分析图生成")
+            return
         
         # 计算所有样本的重构误差
         reconstruction_errors = []
@@ -630,7 +759,7 @@ class ModelEvaluator:
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
         
-        print(f"✅ Residual analysis saved: {output_path}")
+        print(f"[OK] Residual analysis saved: {output_path}")
 
     # --- 新增：残差特征与轻量分类器 ---
     def _compute_residuals_matrix(self, spectra: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -702,7 +831,10 @@ class ModelEvaluator:
             quality_labels: Quality标签
             stability_labels: Stability标签
         """
-        print("🔄 创建混淆矩阵和ROC曲线...")
+        print("[INFO] 创建混淆矩阵和ROC曲线...")
+        plotting_enabled = HAS_PLOTTING_LIBS
+        if not plotting_enabled:
+            print("[WARN] 绘图库缺失，跳过混淆矩阵和ROC曲线可视化，仅计算指标")
         
         # 设置阈值（优先使用训练元数据）
         # Quality Score阈值：从similarity_evaluator元数据中读取
@@ -778,7 +910,7 @@ class ModelEvaluator:
             else:
                 stability_threshold = find_optimal_threshold_by_f1(stability_labels, s_scores_anom)
 
-        print(f"📊 使用阈值: Quality={quality_threshold:.4f}, Stability={stability_threshold:.4f} (opt={self.optimize_thresholds}, flipped_stability={flipped}, auc_probe_stability={auc_probe:.3f})")
+        print(f"[INFO] 使用阈值: Quality={quality_threshold:.4f}, Stability={stability_threshold:.4f} (opt={self.optimize_thresholds}, flipped_stability={flipped}, auc_probe_stability={auc_probe:.3f})")
         
         # 预测标签
         quality_pred = (quality_scores < quality_threshold).astype(int)
@@ -791,143 +923,182 @@ class ModelEvaluator:
             combined_pred = ((quality_pred == 1) & (stability_pred == 1)).astype(int)
         elif combine_strategy == 'or':
             combined_pred = ((quality_pred == 1) | (stability_pred == 1)).astype(int)
+        elif combine_strategy == 'weighted':
+            # 加权组合策略：根据AUC加权，统一方向后归一化再组合
+            # Quality Score: 低分表示异常，转换为异常分数 = 1 - norm(quality_scores)
+            # Stability Score: 高分表示异常，异常分数 = norm(stability_scores_dir)
+            
+            # 归一化到[0, 1]
+            q_min, q_max = quality_scores.min(), quality_scores.max()
+            s_min, s_max = stability_scores_dir.min(), stability_scores_dir.max()
+            
+            if q_max > q_min:
+                quality_norm = (quality_scores - q_min) / (q_max - q_min)
+            else:
+                quality_norm = np.zeros_like(quality_scores)
+            
+            if s_max > s_min:
+                stability_norm = (stability_scores_dir - s_min) / (s_max - s_min)
+            else:
+                stability_norm = np.zeros_like(stability_scores_dir)
+            
+            # Quality低分是异常，所以取反
+            quality_anomaly_score = 1.0 - quality_norm
+            # Stability高分是异常，直接使用
+            stability_anomaly_score = stability_norm
+            
+            # 根据AUC加权（从性能指标读取）
+            q_auc = metrics.get('quality_score', {}).get('auc_roc', 0.903) if 'metrics' in locals() else 0.903
+            s_auc = metrics.get('stability_score', {}).get('auc_roc', 0.735) if 'metrics' in locals() else 0.735
+            total_auc = q_auc + s_auc
+            alpha = q_auc / total_auc  # Quality权重
+            beta = s_auc / total_auc   # Stability权重
+            
+            # 加权组合
+            combined_score = alpha * quality_anomaly_score + beta * stability_anomaly_score
+            
+            # 找最佳阈值
+            combined_true = ((quality_labels == 1) | (stability_labels == 1)).astype(int)
+            if self.optimize_thresholds == 'youden':
+                fpr_comb, tpr_comb, thresholds_comb = roc_curve(combined_true, combined_score)
+                youden_index = tpr_comb - fpr_comb
+                best_idx = np.argmax(youden_index)
+                combined_threshold = thresholds_comb[best_idx]
+            elif self.optimize_thresholds == 'f1':
+                best_f1 = 0
+                best_threshold = 0.5
+                for thresh in np.linspace(0, 1, 101):
+                    pred = (combined_score > thresh).astype(int)
+                    f1 = f1_score(combined_true, pred, zero_division=0)
+                    if f1 > best_f1:
+                        best_f1 = f1
+                        best_threshold = thresh
+                combined_threshold = best_threshold
+            else:
+                combined_threshold = 0.5
+            
+            combined_pred = (combined_score > combined_threshold).astype(int)
+            print(f"   加权组合: α(Quality)={alpha:.3f}, β(Stability)={beta:.3f}, 阈值={combined_threshold:.4f}")
         else:
             # two_stage: 若Quality已异常直接判异常；否则仅由Stability决定
             combined_pred = np.where(quality_pred == 1, 1, stability_pred).astype(int)
+        
         combined_true = ((quality_labels == 1) | (stability_labels == 1)).astype(int)
         
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
-        fig.suptitle('Model Performance Evaluation', fontsize=16, fontweight='bold')
-        
-        # 1. Quality Score混淆矩阵
-        cm_quality = confusion_matrix(quality_labels, quality_pred)
-        sns.heatmap(cm_quality, annot=True, fmt='d', cmap='Blues', ax=ax1)
-        ax1.set_title('Quality Score Confusion Matrix')
-        ax1.set_xlabel('Predicted Label')
-        ax1.set_ylabel('True Label')
-        
-        # 2. Stability Score混淆矩阵
-        cm_stability = confusion_matrix(stability_labels, stability_pred)
-        sns.heatmap(cm_stability, annot=True, fmt='d', cmap='Greens', ax=ax2)
-        ax2.set_title('Stability Score Confusion Matrix')
-        ax2.set_xlabel('Predicted Label')
-        ax2.set_ylabel('True Label')
-        
-        # 3. 组合模型混淆矩阵
-        cm_combined = confusion_matrix(combined_true, combined_pred)
-        sns.heatmap(cm_combined, annot=True, fmt='d', cmap='Oranges', ax=ax3)
-        ax3.set_title('Combined Model Confusion Matrix')
-        ax3.set_xlabel('Predicted Label')
-        ax3.set_ylabel('True Label')
-        
-        # 4. ROC曲线
-        # Quality Score ROC
-        fpr_quality, tpr_quality, _ = roc_curve(quality_labels, -quality_scores)  # 负号因为低分是异常
+        # 计算 ROC/PR 所需指标
+        fpr_quality, tpr_quality, _ = roc_curve(quality_labels, -quality_scores)
         roc_auc_quality = auc(fpr_quality, tpr_quality)
-        
-        # Stability Score ROC（基于方向一致分数）
         fpr_stability, tpr_stability, _ = roc_curve(stability_labels, stability_scores_dir)
         roc_auc_stability = auc(fpr_stability, tpr_stability)
-        
-        # 组合ROC：统一异常方向并做Min-Max归一化后，按单模型AUC加权融合
+
         eps = 1e-12
-        # 质量异常分数：1 - Q（Q高→正常），再归一化到[0,1]
         q_anom = 1.0 - quality_scores
         q_anom = (q_anom - q_anom.min()) / (q_anom.max() - q_anom.min() + eps)
-        # 稳定性异常分数：重构误差高→异常，归一化到[0,1]
         s_anom = (stability_scores_dir - stability_scores_dir.min()) / (stability_scores_dir.max() - stability_scores_dir.min() + eps)
-        # 权重按单模型AUC归一
         w_q = max(roc_auc_quality, 1e-3)
         w_s = max(roc_auc_stability, 1e-3)
         w_sum = w_q + w_s
         w_q /= w_sum
         w_s /= w_sum
         combined_scores = w_q * q_anom + w_s * s_anom
-        print(f"🧮 组合权重: quality={w_q:.3f}, stability={w_s:.3f}")
+        print(f"[INFO] 组合权重: quality={w_q:.3f}, stability={w_s:.3f}")
         fpr_combined, tpr_combined, _ = roc_curve(combined_true, combined_scores)
         roc_auc_combined = auc(fpr_combined, tpr_combined)
-        
-        ax4.plot(fpr_quality, tpr_quality, 'b-', 
-                label=f'Quality Score (AUC = {roc_auc_quality:.3f})')
-        ax4.plot(fpr_stability, tpr_stability, 'g-', 
-                label=f'Stability Score (AUC = {roc_auc_stability:.3f})')
-        ax4.plot(fpr_combined, tpr_combined, 'r-', 
-                label=f'Combined (AUC = {roc_auc_combined:.3f})')
-        ax4.plot([0, 1], [0, 1], 'k--', label='Random')
-        ax4.set_xlabel('False Positive Rate')
-        ax4.set_ylabel('True Positive Rate')
-        ax4.set_title('ROC Curve')
-        ax4.legend()
-        ax4.grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        
-        # 保存图像
-        output_path = self.output_dir / "confusion_matrix_and_roc.png"
-        plt.savefig(output_path, dpi=300, bbox_inches='tight')
-        plt.close()
 
-        # 额外输出：PR曲线
-        plt.figure(figsize=(8,6))
-        # Quality PR（异常为1 → 使用 -quality_scores）
-        pq, rq, _ = precision_recall_curve(quality_labels, -quality_scores)
-        ap_q = average_precision_score(quality_labels, -quality_scores)
-        plt.plot(rq, pq, label=f'Quality AP={ap_q:.3f}')
-        # Stability PR（使用方向一致分数）
-        ps, rs, _ = precision_recall_curve(stability_labels, stability_scores_dir)
-        ap_s = average_precision_score(stability_labels, stability_scores_dir)
-        plt.plot(rs, ps, label=f'Stability AP={ap_s:.3f}')
-        # Combined PR
-        pc, rc, _ = precision_recall_curve(combined_true, combined_scores)
-        ap_c = average_precision_score(combined_true, combined_scores)
-        plt.plot(rc, pc, label=f'Combined AP={ap_c:.3f}')
-        plt.xlabel('Recall')
-        plt.ylabel('Precision')
-        plt.title('Precision-Recall Curves')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        pr_path = self.output_dir / 'pr_curves.png'
-        plt.savefig(pr_path, dpi=300, bbox_inches='tight')
-        plt.close()
+        if plotting_enabled:
+            fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+            fig.suptitle('Model Performance Evaluation', fontsize=16, fontweight='bold')
 
-        # 阈值敏感性（F1 vs 阈值）
-        plt.figure(figsize=(8,6))
-        # Quality：基于 -quality_scores 的阈值
-        th_q = np.linspace((-quality_scores).min(), (-quality_scores).max(), 100)
-        f1_q = []
-        for th in th_q:
-            pred = ((-quality_scores) > th).astype(int)
-            f1_q.append(f1_score(quality_labels, pred, zero_division=0))
-        plt.plot(th_q, f1_q, label='Quality F1')
-        # Stability
-        th_s = np.linspace(stability_scores_dir.min(), stability_scores_dir.max(), 100)
-        f1_s = []
-        for th in th_s:
-            pred = (stability_scores_dir > th).astype(int)
-            f1_s.append(f1_score(stability_labels, pred, zero_division=0))
-        plt.plot(th_s, f1_s, label='Stability F1')
-        plt.xlabel('Threshold')
-        plt.ylabel('F1')
-        plt.title('Threshold Sensitivity (F1 vs Threshold)')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        th_path = self.output_dir / 'threshold_sensitivity.png'
-        plt.savefig(th_path, dpi=300, bbox_inches='tight')
-        plt.close()
+            cm_quality = confusion_matrix(quality_labels, quality_pred)
+            sns.heatmap(cm_quality, annot=True, fmt='d', cmap='Blues', ax=ax1)
+            ax1.set_title('Quality Score Confusion Matrix')
+            ax1.set_xlabel('Predicted Label')
+            ax1.set_ylabel('True Label')
 
-        # 稳定性分数直方图（正负样本）
-        plt.figure(figsize=(8,6))
-        plt.hist(stability_scores_dir[stability_labels==0], bins=40, alpha=0.6, label='Normal')
-        plt.hist(stability_scores_dir[stability_labels==1], bins=40, alpha=0.6, label='Anomaly')
-        plt.xlabel('Stability Anomaly Score (direction unified)')
-        plt.ylabel('Frequency')
-        plt.title('Stability Score Distribution (Positive vs Negative)')
-        plt.legend()
-        plt.grid(True, alpha=0.3)
-        hist_path = self.output_dir / 'stability_score_hist.png'
-        plt.savefig(hist_path, dpi=300, bbox_inches='tight')
-        plt.close()
-        
+            cm_stability = confusion_matrix(stability_labels, stability_pred)
+            sns.heatmap(cm_stability, annot=True, fmt='d', cmap='Greens', ax=ax2)
+            ax2.set_title('Stability Score Confusion Matrix')
+            ax2.set_xlabel('Predicted Label')
+            ax2.set_ylabel('True Label')
+
+            cm_combined = confusion_matrix(combined_true, combined_pred)
+            sns.heatmap(cm_combined, annot=True, fmt='d', cmap='Oranges', ax=ax3)
+            ax3.set_title('Combined Model Confusion Matrix')
+            ax3.set_xlabel('Predicted Label')
+            ax3.set_ylabel('True Label')
+
+            ax4.plot(fpr_quality, tpr_quality, 'b-', label=f'Quality Score (AUC = {roc_auc_quality:.3f})')
+            ax4.plot(fpr_stability, tpr_stability, 'g-', label=f'Stability Score (AUC = {roc_auc_stability:.3f})')
+            ax4.plot(fpr_combined, tpr_combined, 'r-', label=f'Combined (AUC = {roc_auc_combined:.3f})')
+            ax4.plot([0, 1], [0, 1], 'k--', label='Random')
+            ax4.set_xlabel('False Positive Rate')
+            ax4.set_ylabel('True Positive Rate')
+            ax4.set_title('ROC Curve')
+            ax4.legend()
+            ax4.grid(True, alpha=0.3)
+
+            plt.tight_layout()
+            output_path = self.output_dir / "confusion_matrix_and_roc.png"
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            plt.close()
+
+            plt.figure(figsize=(8, 6))
+            pq, rq, _ = precision_recall_curve(quality_labels, -quality_scores)
+            ap_q = average_precision_score(quality_labels, -quality_scores)
+            plt.plot(rq, pq, label=f'Quality AP={ap_q:.3f}')
+            ps, rs, _ = precision_recall_curve(stability_labels, stability_scores_dir)
+            ap_s = average_precision_score(stability_labels, stability_scores_dir)
+            plt.plot(rs, ps, label=f'Stability AP={ap_s:.3f}')
+            pc, rc, _ = precision_recall_curve(combined_true, combined_scores)
+            ap_c = average_precision_score(combined_true, combined_scores)
+            plt.plot(rc, pc, label=f'Combined AP={ap_c:.3f}')
+            plt.xlabel('Recall')
+            plt.ylabel('Precision')
+            plt.title('Precision-Recall Curves')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            pr_path = self.output_dir / 'pr_curves.png'
+            plt.savefig(pr_path, dpi=300, bbox_inches='tight')
+            plt.close()
+
+            plt.figure(figsize=(8, 6))
+            th_q = np.linspace((-quality_scores).min(), (-quality_scores).max(), 100)
+            f1_q = []
+            for th in th_q:
+                pred = ((-quality_scores) > th).astype(int)
+                f1_q.append(f1_score(quality_labels, pred, zero_division=0))
+            plt.plot(th_q, f1_q, label='Quality F1')
+            th_s = np.linspace(stability_scores_dir.min(), stability_scores_dir.max(), 100)
+            f1_s = []
+            for th in th_s:
+                pred = (stability_scores_dir > th).astype(int)
+                f1_s.append(f1_score(stability_labels, pred, zero_division=0))
+            plt.plot(th_s, f1_s, label='Stability F1')
+            plt.xlabel('Threshold')
+            plt.ylabel('F1')
+            plt.title('Threshold Sensitivity (F1 vs Threshold)')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            th_path = self.output_dir / 'threshold_sensitivity.png'
+            plt.savefig(th_path, dpi=300, bbox_inches='tight')
+            plt.close()
+
+            plt.figure(figsize=(8, 6))
+            plt.hist(stability_scores_dir[stability_labels == 0], bins=40, alpha=0.6, label='Normal')
+            plt.hist(stability_scores_dir[stability_labels == 1], bins=40, alpha=0.6, label='Anomaly')
+            plt.xlabel('Stability Anomaly Score (direction unified)')
+            plt.ylabel('Frequency')
+            plt.title('Stability Score Distribution (Positive vs Negative)')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            hist_path = self.output_dir / 'stability_score_hist.png'
+            plt.savefig(hist_path, dpi=300, bbox_inches='tight')
+            plt.close()
+
+            print(f"[OK] Confusion matrices and ROC saved: {output_path}")
+        else:
+            print("[INFO] 已跳过图表生成，继续计算性能指标")
+
         # 计算性能指标
         # 在度量计算中也使用方向一致的稳定性分数
         performance_metrics = self._calculate_performance_metrics(
@@ -943,8 +1114,6 @@ class ModelEvaluator:
             **performance_metrics['combined_model'],
             'combine_strategy': combine_strategy
         }
-        
-        print(f"✅ Confusion matrices and ROC saved: {output_path}")
         return performance_metrics
     
     def _calculate_performance_metrics(self, quality_scores: np.ndarray, 
@@ -965,13 +1134,49 @@ class ModelEvaluator:
         stability_pred = (stability_scores > stability_threshold).astype(int)
         # 组合预测遵循与图一致的策略
         strategy = combine_strategy or self.combine_strategy or self.metadata.get('combine_strategy', 'two_stage')
+        combined_true = ((quality_labels == 1) | (stability_labels == 1)).astype(int)
+        
         if strategy == 'and':
             combined_pred = ((quality_pred == 1) & (stability_pred == 1)).astype(int)
         elif strategy == 'or':
             combined_pred = ((quality_pred == 1) | (stability_pred == 1)).astype(int)
+        elif strategy == 'weighted':
+            # 加权组合策略（与评估图中的逻辑一致）
+            q_min, q_max = quality_scores.min(), quality_scores.max()
+            s_min, s_max = stability_scores.min(), stability_scores.max()
+            
+            if q_max > q_min:
+                quality_norm = (quality_scores - q_min) / (q_max - q_min)
+            else:
+                quality_norm = np.zeros_like(quality_scores)
+            
+            if s_max > s_min:
+                stability_norm = (stability_scores - s_min) / (s_max - s_min)
+            else:
+                stability_norm = np.zeros_like(stability_scores)
+            
+            quality_anomaly_score = 1.0 - quality_norm
+            stability_anomaly_score = stability_norm
+            
+            # 使用默认AUC权重（与evaluate中一致）
+            alpha = 0.903 / (0.903 + 0.735)
+            beta = 0.735 / (0.903 + 0.735)
+            
+            combined_score = alpha * quality_anomaly_score + beta * stability_anomaly_score
+            
+            # 使用F1优化找最佳阈值
+            best_f1 = 0
+            best_threshold = 0.5
+            for thresh in np.linspace(0, 1, 101):
+                pred = (combined_score > thresh).astype(int)
+                f1 = f1_score(combined_true, pred, zero_division=0)
+                if f1 > best_f1:
+                    best_f1 = f1
+                    best_threshold = thresh
+            
+            combined_pred = (combined_score > best_threshold).astype(int)
         else:
             combined_pred = np.where(quality_pred == 1, 1, stability_pred).astype(int)
-        combined_true = ((quality_labels == 1) | (stability_labels == 1)).astype(int)
         
         # Quality Score指标
         quality_accuracy = accuracy_score(quality_labels, quality_pred)
@@ -1043,7 +1248,7 @@ class ModelEvaluator:
             metrics: 性能指标字典
             n_samples: 评估样本数量
         """
-        print("📝 生成评估报告...")
+        print("[INFO] 生成评估报告...")
         
         # 从元数据推断模型版本信息
         coating_name = self.metadata.get('coating_name', 'DVP') if isinstance(self.metadata, dict) else 'DVP'
@@ -1152,8 +1357,8 @@ DVP涂层光谱异常检测模型在测试数据集上表现良好，组合模�
         with open(metrics_path, 'w', encoding='utf-8') as f:
             json.dump(metrics, f, indent=2, ensure_ascii=False)
         
-        print(f"✅ 评估报告已保存: {report_path}")
-        print(f"📊 性能指标已保存: {metrics_path}")
+        print(f"[OK] 评估报告已保存: {report_path}")
+        print(f"[INFO] 性能指标已保存: {metrics_path}")
     
     def run_complete_evaluation(self, n_samples: int = 1000):
         """
@@ -1162,7 +1367,7 @@ DVP涂层光谱异常检测模型在测试数据集上表现良好，组合模�
         Args:
             n_samples: 评估样本数量
         """
-        print("🚀 开始完整的模型评估流程...")
+        print("[RUN] 开始完整的模型评估流程...")
         print("=" * 60)
         
         try:
@@ -1211,39 +1416,74 @@ DVP涂层光谱异常检测模型在测试数据集上表现良好，组合模�
                 s_anom = (s_dir - s_dir.min()) / (s_dir.max() - s_dir.min() + eps)
                 r_anom = (r_scores - r_scores.min()) / (r_scores.max() - r_scores.min() + eps)
 
-                if mode == 'or':
-                    fused = np.maximum(s_anom, r_anom)
-                else:
-                    fused = weight * s_anom + (1.0 - weight) * r_anom
-
-                # 计算融合后的组合PR/ROC等（仅指标，不重复绘图）
                 from sklearn.metrics import roc_curve, auc, f1_score, precision_score, recall_score, accuracy_score
                 combined_true = ((quality_labels == 1) | (stability_labels == 1)).astype(int)
-                # 使用同样的质量异常分数（1-Q）
+
+                # 质量异常分数（1 - Quality）
                 q_anom = 1.0 - quality_scores
                 q_anom = (q_anom - q_anom.min()) / (q_anom.max() - q_anom.min() + eps)
-                # 简单平均得到新的组合分数
-                combined_scores_fused = 0.5 * q_anom + 0.5 * fused
-                fpr_fused, tpr_fused, th_fused = roc_curve(combined_true, combined_scores_fused)
-                auc_fused = auc(fpr_fused, tpr_fused)
 
-                # 以F1最优阈值取工作点
-                th_grid = np.linspace(combined_scores_fused.min(), combined_scores_fused.max(), 200)
-                best_f1, best_th = -1.0, th_grid[0]
-                for th in th_grid:
-                    pred = (combined_scores_fused > th).astype(int)
-                    f1 = f1_score(combined_true, pred, zero_division=0)
-                    if f1 > best_f1:
-                        best_f1, best_th = f1, th
-                pred = (combined_scores_fused > best_th).astype(int)
-                acc = accuracy_score(combined_true, pred)
-                prec = precision_score(combined_true, pred, zero_division=0)
-                rec = recall_score(combined_true, pred, zero_division=0)
+                if self.residual_weights_config:
+                    # 使用metadata提供的三通道权重
+                    w_q = float(self.residual_weights_config.get('quality', 0.5))
+                    w_s = float(self.residual_weights_config.get('stability', 0.25))
+                    w_r = float(self.residual_weights_config.get('residual', 0.25))
+                    weight_sum = w_q + w_s + w_r
+                    if weight_sum <= 0:
+                        weight_sum = 1.0
+                    w_q /= weight_sum
+                    w_s /= weight_sum
+                    w_r /= weight_sum
+                    mode = 'weighted'
+                    fused = w_q * q_anom + w_s * s_anom + w_r * r_anom
+                    fpr_fused, tpr_fused, _ = roc_curve(combined_true, fused)
+                    auc_fused = auc(fpr_fused, tpr_fused)
+                    # 阈值优先使用配置，否则自动搜索
+                    if self.residual_threshold_config is not None:
+                        best_th = float(self.residual_threshold_config)
+                        best_f1 = f1_score(combined_true, (fused > best_th).astype(int), zero_division=0)
+                    else:
+                        th_grid = np.linspace(fused.min(), fused.max(), 200)
+                        best_f1, best_th = -1.0, th_grid[0]
+                        for th in th_grid:
+                            pred = (fused > th).astype(int)
+                            f1 = f1_score(combined_true, pred, zero_division=0)
+                            if f1 > best_f1:
+                                best_f1, best_th = f1, th
+                    pred = (fused > best_th).astype(int)
+                    acc = accuracy_score(combined_true, pred)
+                    prec = precision_score(combined_true, pred, zero_division=0)
+                    rec = recall_score(combined_true, pred, zero_division=0)
+                    combined_scores_fused = fused
+                    weights_entry = {'quality': w_q, 'stability': w_s, 'residual': w_r}
+                else:
+                    if mode == 'or':
+                        fused_sr = np.maximum(s_anom, r_anom)
+                    else:
+                        fused_sr = weight * s_anom + (1.0 - weight) * r_anom
+
+                    combined_scores_fused = 0.5 * q_anom + 0.5 * fused_sr
+                    fpr_fused, tpr_fused, th_fused = roc_curve(combined_true, combined_scores_fused)
+                    auc_fused = auc(fpr_fused, tpr_fused)
+
+                    th_grid = np.linspace(combined_scores_fused.min(), combined_scores_fused.max(), 200)
+                    best_f1, best_th = -1.0, th_grid[0]
+                    for th in th_grid:
+                        pred = (combined_scores_fused > th).astype(int)
+                        f1 = f1_score(combined_true, pred, zero_division=0)
+                        if f1 > best_f1:
+                            best_f1, best_th = f1, th
+                    pred = (combined_scores_fused > best_th).astype(int)
+                    acc = accuracy_score(combined_true, pred)
+                    prec = precision_score(combined_true, pred, zero_division=0)
+                    rec = recall_score(combined_true, pred, zero_division=0)
+                    weights_entry = None
 
                 # 写入metrics补充字段
                 metrics['residual_classifier'] = {
                     'fuse_mode': mode,
-                    'weight': weight,
+                    'weight': w_r if self.residual_weights_config else weight,
+                    'weights': weights_entry,
                     'auc_roc_stability_residual': float(auc((roc_curve(stability_labels, r_anom)[0]), (roc_curve(stability_labels, r_anom)[1]))),
                 }
                 metrics['combined_with_residual'] = {
@@ -1259,15 +1499,15 @@ DVP涂层光谱异常检测模型在测试数据集上表现良好，组合模�
             self.generate_evaluation_report(metrics, n_samples)
             
             print("=" * 60)
-            print("🎉 模型评估完成!")
-            print(f"📁 所有结果已保存到: {self.output_dir}")
-            print("\n📊 关键指标:")
+            print("[DONE] 模型评估完成!")
+            print(f"[DIR] 所有结果已保存到: {self.output_dir}")
+            print("\n[INFO] 关键指标:")
             print(f"   - 组合模型准确率: {metrics['combined_model']['accuracy']:.4f}")
             print(f"   - 组合模型F1分数: {metrics['combined_model']['f1_score']:.4f}")
             print(f"   - 组合模型AUC-ROC: {metrics['combined_model']['auc_roc']:.4f}")
             
         except Exception as e:
-            print(f"❌ 评估过程中发生错误: {e}")
+            print(f"[ERROR] 评估过程中发生错误: {e}")
             raise
 
 
@@ -1282,8 +1522,8 @@ def main():
     parser.add_argument('--model-dir', type=str, 
                        default=str(project_root / "models"),
                        help='模型文件目录')
-    parser.add_argument('--combine-strategy', type=str, choices=['two_stage', 'and', 'or'],
-                       default=None, help='组合策略覆盖(two_stage|and|or)')
+    parser.add_argument('--combine-strategy', type=str, choices=['two_stage', 'and', 'or', 'weighted'],
+                       default=None, help='组合策略覆盖(two_stage|and|or|weighted)')
     parser.add_argument('--use-residual-clf', action='store_true',
                        help='启用残差分段特征+Logistic 辅助通道')
     parser.add_argument('--residual-fuse-mode', type=str, choices=['weighted', 'or'], default='weighted',
@@ -1294,6 +1534,8 @@ def main():
                        help='随机种子，用于生成可复现的测试数据（默认: 42）')
     parser.add_argument('--optimize-thresholds', type=str, choices=['none', 'youden', 'f1'], default='f1',
                        help='阈值优化方法：none/youden/f1（默认: none）')
+    parser.add_argument('--test-data-npz', type=str, default=None,
+                       help='真实测试数据NPZ路径（包含wavelengths, dvp_values）')
     
     args = parser.parse_args()
     
@@ -1304,6 +1546,8 @@ def main():
         setattr(evaluator, 'use_residual_clf', True)
         setattr(evaluator, 'residual_fuse_mode', args.residual_fuse_mode)
         setattr(evaluator, 'residual_weight', args.residual_weight)
+    if args.test_data_npz:
+        setattr(evaluator, 'test_data_npz', args.test_data_npz)
     evaluator.run_complete_evaluation(n_samples=args.samples)
 
 

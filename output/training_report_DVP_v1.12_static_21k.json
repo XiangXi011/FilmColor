@@ -1,0 +1,44 @@
+{
+  "training_summary": {
+    "coating_name": "DVP",
+    "version": "v1.12_static_21k",
+    "training_date": "2025-11-01T09:56:48.280625",
+    "training_time_seconds": 14.30416,
+    "status": "COMPLETED"
+  },
+  "similarity_evaluator": {
+    "quality_threshold": 92.0,
+    "normal_scores_distribution": {
+      "mean": 97.79764644655519,
+      "std": 6.022153711744772,
+      "min": 74.53930694951751,
+      "max": 100.0,
+      "percentile_5": 81.14173183425729,
+      "percentile_95": 100.0
+    },
+    "description": "基于专家规则的质量评估，阈值用于判断光谱是否符合标准"
+  },
+  "weighted_autoencoder": {
+    "stability_threshold": 5.182757277335099,
+    "threshold_percentile": 99.9,
+    "error_distribution": {
+      "train_mean": 0.14801482146798006,
+      "train_std": 0.5241137447261792,
+      "val_mean": 0.17114787663216524,
+      "val_std": 0.5866381088119903
+    },
+    "description": "基于机器学习的稳定性评估，阈值用于检测过程异常"
+  },
+  "model_files": {
+    "encoder": "C:\\Users\\24523\\Desktop\\film_color\\train_project\\code\\spectrum_anomaly_detection\\models\\DVP\\v1.12_static_21k\\encoder_DVP_v1.12_static_21k.joblib",
+    "decoder": "C:\\Users\\24523\\Desktop\\film_color\\train_project\\code\\spectrum_anomaly_detection\\models\\DVP\\v1.12_static_21k\\decoder_DVP_v1.12_static_21k.joblib",
+    "scaler": "C:\\Users\\24523\\Desktop\\film_color\\train_project\\code\\spectrum_anomaly_detection\\models\\DVP\\v1.12_static_21k\\scaler_DVP_v1.12_static_21k.joblib",
+    "weights": "C:\\Users\\24523\\Desktop\\film_color\\train_project\\code\\spectrum_anomaly_detection\\models\\DVP\\v1.12_static_21k\\weights_DVP_v1.12_static_21k.npy",
+    "metadata": "C:\\Users\\24523\\Desktop\\film_color\\train_project\\code\\spectrum_anomaly_detection\\models\\DVP\\v1.12_static_21k\\metadata_DVP_v1.12_static_21k.json"
+  },
+  "next_steps": [
+    "Phase 5: 模型评估和可视化系统",
+    "Phase 6: 决策引擎和API接口",
+    "部署到生产环境"
+  ]
+}

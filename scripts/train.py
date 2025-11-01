@@ -23,7 +23,8 @@ import logging
 from datetime import datetime
 
 # 添加项目路径
-sys.path.append('/workspace/code/spectrum_anomaly_detection')
+project_root = Path(__file__).parent.parent
+sys.path.append(str(project_root))
 
 # 导入自定义模块
 from algorithms.similarity_evaluator import SimilarityEvaluator
@@ -260,6 +261,9 @@ class SpectrumAnomalyTrainer:
         """
         生成训练数据
         
+        如果提供了data_npz_path且文件是训练子集NPZ（含21k+样本），则直接使用真实样本；
+        否则使用合成噪声样本。
+        
         Args:
             standard_spectrum: 标准光谱
             wavelengths: 波长数组
@@ -269,7 +273,33 @@ class SpectrumAnomalyTrainer:
         """
         np.random.seed(self.config['random_seed'])
         
-        # 生成正常样本（低噪声）
+        # 检查是否提供了真实训练数据NPZ
+        if hasattr(self, 'data_npz_path') and self.data_npz_path:
+            try:
+                data = np.load(self.data_npz_path)
+                if 'dvp_values' in data and data['dvp_values'].shape[0] >= 1000:  # 真实样本应该>=1000
+                    logger.info(f"使用真实训练数据: {data['dvp_values'].shape[0]}个样本")
+                    spectra = data['dvp_values']
+                    # 假设所有样本都是正常样本（标签=1）
+                    labels = np.ones(len(spectra), dtype=int)
+                    
+                    # 划分训练集和验证集
+                    from sklearn.model_selection import train_test_split
+                    X_train, X_val, y_train, y_val = train_test_split(
+                        spectra, labels,
+                        test_size=self.config['validation_split'],
+                        random_state=self.config['random_seed']
+                    )
+                    
+                    logger.info(f"训练数据划分完成:")
+                    logger.info(f"  - 训练集: {len(X_train)}个样本")
+                    logger.info(f"  - 验证集: {len(X_val)}个样本")
+                    
+                    return X_train, X_val, y_train, y_val
+            except Exception as e:
+                logger.warning(f"无法加载真实训练数据: {e}，回退到合成噪声样本")
+        
+        # 回退：生成正常样本（低噪声）
         normal_spectra = []
         normal_labels = []
         
@@ -529,7 +559,8 @@ class SpectrumAnomalyTrainer:
             dict: 保存的文件路径
         """
         # 创建保存目录
-        model_dir = Path("/workspace/code/spectrum_anomaly_detection/models")
+        project_root = Path(__file__).parent.parent
+        model_dir = project_root / "models"
         coating_dir = model_dir / self.coating_name / self.version
         coating_dir.mkdir(parents=True, exist_ok=True)
         
@@ -643,7 +674,8 @@ class SpectrumAnomalyTrainer:
         }
         
         # 保存报告
-        report_path = Path("/workspace/code/spectrum_anomaly_detection/output") / f"training_report_{self.coating_name}_{self.version}.json"
+        project_root = Path(__file__).parent.parent
+        report_path = project_root / "output" / f"training_report_{self.coating_name}_{self.version}.json"
         report_path.parent.mkdir(exist_ok=True)
         
         with open(report_path, 'w', encoding='utf-8') as f:
@@ -818,7 +850,7 @@ def main():
     # 输出结果
     if result['status'] == 'SUCCESS':
         print("\n" + "="*60)
-        print("🎉 训练成功完成！")
+        print("训练成功完成!")
         print("="*60)
         print(f"涂层: {args.coating_name}")
         print(f"版本: {args.version}")

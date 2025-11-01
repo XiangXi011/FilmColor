@@ -1,0 +1,14 @@
+{
+  "pearson_r": -0.03423927487905009,
+  "pearson_p": 0.020685970970248834,
+  "spearman_r": -0.01437752794054126,
+  "spearman_p": 0.3313963410863209,
+  "correlation_strength": "弱相关/独立",
+  "r2_quality_to_stability": 0.0011723279442431567,
+  "r2_stability_to_quality": 0.0011723279442431567,
+  "mi_quality_to_stability": 0.10057210763674629,
+  "mi_stability_to_quality": 0.10057210763674629,
+  "decision": "keep_stability",
+  "recommendation": "[建议保留] Stability Score（独立性好，提供额外信息）",
+  "n_samples": 4566
+}

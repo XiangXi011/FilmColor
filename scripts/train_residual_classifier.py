@@ -45,6 +45,8 @@ def read_labeled_csv(csv_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]
     for col in df.columns:
         if col == 'label':
             continue
+        if col.lower() in {'sample_idx', 'sample_id', 'id'}:
+            continue
         try:
             wl = float(col)
             numeric_cols.append(col)
